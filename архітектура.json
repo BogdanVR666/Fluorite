@@ -1,0 +1,291 @@
+{
+  "version": 1,
+  "classes": [
+    {
+      "name": "Звичайна",
+      "shape": "circle",
+      "color": "#3d7bd9"
+    },
+    {
+      "name": "Python-модуль",
+      "shape": "circle",
+      "color": "#3d7bd9"
+    },
+    {
+      "name": "Клас",
+      "shape": "diamond",
+      "color": "#9b59b6"
+    },
+    {
+      "name": "QML-компонент",
+      "shape": "square",
+      "color": "#27ae60"
+    },
+    {
+      "name": "Бібліотека",
+      "shape": "triangle",
+      "color": "#f39c12"
+    }
+  ],
+  "nodes": [
+    {
+      "id": 1,
+      "x": 461.0,
+      "y": 140.0,
+      "label": "main.py",
+      "class": "Python-модуль",
+      "shape": null,
+      "color": null
+    },
+    {
+      "id": 2,
+      "x": 434.0,
+      "y": 238.0,
+      "label": "stress",
+      "class": "Python-модуль",
+      "shape": null,
+      "color": null
+    },
+    {
+      "id": 3,
+      "x": 569.0,
+      "y": 252.0,
+      "label": "graphs",
+      "class": "Python-модуль",
+      "shape": null,
+      "color": null
+    },
+    {
+      "id": 4,
+      "x": 710.0,
+      "y": 264.0,
+      "label": "nodes",
+      "class": "Python-модуль",
+      "shape": null,
+      "color": null
+    },
+    {
+      "id": 5,
+      "x": 674.0,
+      "y": 159.0,
+      "label": "storage",
+      "class": "Python-модуль",
+      "shape": null,
+      "color": null
+    },
+    {
+      "id": 6,
+      "x": 447.0,
+      "y": 333.0,
+      "label": "Backend",
+      "class": "Клас",
+      "shape": null,
+      "color": null
+    },
+    {
+      "id": 7,
+      "x": 569.0,
+      "y": 430.0,
+      "label": "Model",
+      "class": "Клас",
+      "shape": null,
+      "color": null
+    },
+    {
+      "id": 8,
+      "x": 841.0,
+      "y": 289.0,
+      "label": "Meta",
+      "class": "Клас",
+      "shape": null,
+      "color": null
+    },
+    {
+      "id": 9,
+      "x": 797.0,
+      "y": 391.0,
+      "label": "Base",
+      "class": "Клас",
+      "shape": null,
+      "color": null
+    },
+    {
+      "id": 10,
+      "x": 700.0,
+      "y": 442.0,
+      "label": "Default",
+      "class": "Клас",
+      "shape": null,
+      "color": null
+    },
+    {
+      "id": 11,
+      "x": 262.0,
+      "y": 355.0,
+      "label": "main.qml",
+      "class": "QML-компонент",
+      "shape": null,
+      "color": null
+    },
+    {
+      "id": 12,
+      "x": 77.0,
+      "y": 375.0,
+      "label": "Panel",
+      "class": "QML-компонент",
+      "shape": null,
+      "color": null
+    },
+    {
+      "id": 13,
+      "x": 182.0,
+      "y": 441.0,
+      "label": "Menu",
+      "class": "QML-компонент",
+      "shape": null,
+      "color": null
+    },
+    {
+      "id": 14,
+      "x": 396.0,
+      "y": 487.0,
+      "label": "Node",
+      "class": "QML-компонент",
+      "shape": null,
+      "color": null
+    },
+    {
+      "id": 15,
+      "x": 215.0,
+      "y": 596.0,
+      "label": "Theme",
+      "class": "QML-компонент",
+      "shape": null,
+      "color": null
+    },
+    {
+      "id": 16,
+      "x": 531.0,
+      "y": 50.0,
+      "label": "PySide6",
+      "class": "Бібліотека",
+      "shape": null,
+      "color": null
+    },
+    {
+      "id": 17,
+      "x": 644.0,
+      "y": 56.0,
+      "label": "nx",
+      "class": "Бібліотека",
+      "shape": null,
+      "color": null
+    }
+  ],
+  "edges": [
+    [
+      1,
+      16
+    ],
+    [
+      1,
+      3
+    ],
+    [
+      1,
+      11
+    ],
+    [
+      2,
+      3
+    ],
+    [
+      3,
+      17
+    ],
+    [
+      3,
+      16
+    ],
+    [
+      3,
+      4
+    ],
+    [
+      3,
+      5
+    ],
+    [
+      3,
+      6
+    ],
+    [
+      3,
+      7
+    ],
+    [
+      4,
+      5
+    ],
+    [
+      4,
+      8
+    ],
+    [
+      4,
+      9
+    ],
+    [
+      4,
+      10
+    ],
+    [
+      6,
+      7
+    ],
+    [
+      6,
+      11
+    ],
+    [
+      7,
+      14
+    ],
+    [
+      8,
+      9
+    ],
+    [
+      9,
+      10
+    ],
+    [
+      11,
+      12
+    ],
+    [
+      11,
+      13
+    ],
+    [
+      11,
+      14
+    ],
+    [
+      11,
+      15
+    ],
+    [
+      12,
+      15
+    ],
+    [
+      13,
+      15
+    ],
+    [
+      14,
+      15
+    ]
+  ]
+}
