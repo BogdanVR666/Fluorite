@@ -39,7 +39,8 @@ def build_round(backend: GraphBackend, degree: int) -> None:
     regular = nx.random_regular_graph(degree, N_NODES, seed=SEED)
     t0 = time.perf_counter()
     for a, b in regular.edges():
-        assert backend.addEdge(a + 1, b + 1), f"addEdge({a + 1}, {b + 1}) не вдався"
+        assert backend.addEdge(a + 1, b + 1, "Звичайне"), \
+            f"addEdge({a + 1}, {b + 1}) не вдався"
     n_edges = regular.number_of_edges()
     t_edges = time.perf_counter() - t0
     print(f"addEdge x{n_edges}: {t_edges:.3f} c "
@@ -79,11 +80,15 @@ def build_round(backend: GraphBackend, degree: int) -> None:
 
 
 def class_round(backend: GraphBackend) -> None:
-    """Групові операції через класи вершин: кліка + вершина→клас."""
-    print(f"\n=== Раунд: класи вершин ({N_NODES} вершин) ===")
-    assert backend.createNodeClass("Хаб", "diamond", "#f39c12")
-    assert not backend.createNodeClass("Хаб", "circle", "#000000"), \
+    """Групові операції через класи вершин і ребер: кліка + вершина→клас."""
+    print(f"\n=== Раунд: класи вершин і ребер ({N_NODES} вершин) ===")
+    assert backend.createClass("node", "Хаб",
+                               {"shape": "diamond", "color": "#f39c12"})
+    assert not backend.createClass("node", "Хаб",
+                                   {"shape": "circle", "color": "#000000"}), \
         "дубль імені класу мав бути відхилений"
+    assert backend.createClass("edge", "Міцне",
+                               {"color": "#e74c3c", "width": 5, "line": "dash"})
 
     for i in range(N_NODES):
         backend.addNode(float(i), float(i), "Звичайна")
@@ -91,14 +96,16 @@ def class_round(backend: GraphBackend) -> None:
     hub = N_NODES + 1
 
     t0 = time.perf_counter()
-    msg = backend.connectClassNodes("Звичайна")
+    msg = backend.connectClassNodes("Звичайна", "Міцне")
     t_clique = time.perf_counter() - t0
     want = N_NODES * (N_NODES - 1) // 2
     print(f"connectClassNodes: {t_clique:.3f} c — {msg}")
     assert backend._g.number_of_edges() == want, "кліка неповна"
+    strong = next(c for c in backend.classList("edge") if c["name"] == "Міцне")
+    assert strong["count"] == want, "ребра кліки мали отримати клас «Міцне»"
 
     t0 = time.perf_counter()
-    msg = backend.connectNodeToClass(hub, "Звичайна")
+    msg = backend.connectNodeToClass(hub, "Звичайна", "Звичайне")
     print(f"connectNodeToClass: {time.perf_counter() - t0:.3f} c — {msg}")
     assert backend._g.degree[hub] == N_NODES, "хаб з'єднано не з усіма"
 

@@ -13,12 +13,12 @@ QtObject {
 
     // Ключі VS Code; дефолт відтворює поточний вигляд застосунку
     property var colors: ({
-        "editor.background":           "#000000",
+        "editor.background":           "#222222",
         "editor.foreground":           "#ffffff",
         "titleBar.activeBackground":   "#2a2a3d",
-        "statusBar.background":        "#2a2a3d",
+        "statusBar.background":        "#222222",
         "statusBar.foreground":        "#a0a0c0",
-        "sideBar.background":          "#26263a",
+        "sideBar.background":          "#222222",
         "menu.background":             "#26263a",
         "menu.border":                 "#44445e",
         "widget.border":               "#44445e",

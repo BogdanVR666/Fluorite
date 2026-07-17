@@ -24,7 +24,7 @@ def main() -> int:
 
     rc = app.exec()
     engine.deleteLater()
-    return rc   # прив'язки QML на мить побачать null і засмітять консоль
+    return rc
 
 
 if __name__ == "__main__":

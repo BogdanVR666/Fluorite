@@ -3,8 +3,9 @@
 NodesModel   — QAbstractListModel поверх вершин nx.Graph для QML.
 GraphBackend — фасад над nx.Graph: редагування, алгоритми, статистика.
 
-Вершини графа — це об'єкти класів із nodes.py (нащадки BaseNode);
-nx.Graph зберігає їх в атрибуті "obj" за цілим ключем nodeId.
+Вершини і ребра графа — це об'єкти родин елементів (нащадки BaseNode
+та BaseEdge, див. elements.py); nx.Graph зберігає їх в атрибуті "obj"
+вершини (за цілим ключем nodeId) чи ребра (за парою ключів).
 """
 
 from itertools import combinations
@@ -23,7 +24,20 @@ from PySide6.QtCore import (
 )
 
 import storage
-from nodes import BaseNode, DefaultNode, NodeMeta, make_node_class
+from edges import BaseEdge, DefaultEdge
+from elements import ElementMeta
+from nodes import BaseNode, DefaultNode
+
+
+def _point_segment_dist2(px: float, py: float,
+                         x1: float, y1: float, x2: float, y2: float) -> float:
+    """Квадрат відстані від точки (px, py) до відрізка (x1,y1)-(x2,y2)."""
+    vx, vy = x2 - x1, y2 - y1
+    wx, wy = px - x1, py - y1
+    seg2 = vx * vx + vy * vy
+    t = 0.0 if seg2 == 0.0 else max(0.0, min(1.0, (wx * vx + wy * vy) / seg2))
+    dx, dy = wx - t * vx, wy - t * vy
+    return dx * dx + dy * dy
 
 
 class NodesModel(QAbstractListModel):
@@ -150,6 +164,15 @@ class GraphBackend(QObject):
     def _node(self, nid: int) -> BaseNode:
         return self._g.nodes[nid]["obj"]
 
+    def _edge(self, a: int, b: int) -> BaseEdge:
+        return self._g.edges[a, b]["obj"]
+
+    def _objects(self, family: str):
+        """Об'єкти всіх елементів родини, що зараз є у графі."""
+        if family == "node":
+            return (data["obj"] for _, data in self._g.nodes(data=True))
+        return (data["obj"] for _, _, data in self._g.edges(data=True))
+
     # --- властивості для QML ---
 
     @Property(QObject, constant=True)
@@ -163,32 +186,38 @@ class GraphBackend(QObject):
         c = nx.number_connected_components(self._g) if n else 0
         return f"Вершин: {n}  •  Ребер: {m}  •  Компонент зв'язності: {c}"
 
-    # --- класи вершин ---
+    # --- класи елементів (родини "node" і "edge") ---
 
-    @Slot(result="QVariantList")
-    def classList(self):
-        """Усі класи вершин: дизайн і кількість вершин кожного."""
+    @Slot(str, result="QVariantList")
+    def classList(self, family: str):
+        """Класи родини: дизайн і кількість елементів кожного."""
+        root = ElementMeta.families.get(family)
+        if root is None:
+            return []
         counts: dict[str, int] = {}
-        for nid in self._g.nodes:
-            name = type(self._node(nid)).type_name
+        for obj in self._objects(family):
+            name = type(obj).type_name
             counts[name] = counts.get(name, 0) + 1
         return [{
             "name": cls.type_name,
-            "shape": cls.default_shape,
-            "color": cls.default_color,
             "count": counts.get(cls.type_name, 0),
-        } for cls in NodeMeta.registry.values()]
+            **cls.design(),
+        } for cls in root.registry.values()]
 
-    @Slot(str, str, str, result=bool)
-    def createNodeClass(self, name: str, shape: str, color: str) -> bool:
-        if make_node_class(name, shape, color) is None:
+    @Slot(str, str, "QVariantMap", result=bool)
+    def createClass(self, family: str, name: str, design: dict) -> bool:
+        root = ElementMeta.families.get(family)
+        if root is None:
+            return False
+        design = {f: v for f, v in design.items() if f in root.style_fields}
+        if root.define(name, **design) is None:
             return False
         self.classesChanged.emit()
         return True
 
     @Slot(int, str)
     def setNodeClass(self, nid: int, class_name: str):
-        cls = NodeMeta.registry.get(class_name)
+        cls = BaseNode.registry.get(class_name)
         if cls is None or nid not in self._g:
             return
         old = self._node(nid)
@@ -199,16 +228,26 @@ class GraphBackend(QObject):
                                      NodesModel.ClassRole])
         self.graphChanged.emit()   # у classList змінились лічильники
 
+    @Slot(int, int, str)
+    def setEdgeClass(self, a: int, b: int, class_name: str):
+        cls = BaseEdge.registry.get(class_name)
+        if cls is None or not self._g.has_edge(a, b):
+            return
+        old = self._edge(a, b)
+        # новий об'єкт без перекриттів стилю — ребро приймає дизайн класу
+        self._g.edges[a, b]["obj"] = cls(old.label)
+        self.graphChanged.emit()   # перемальовує ребра й оновлює лічильники
+
     def _class_ids(self, class_name: str) -> list[int]:
         return [nid for nid in self._g.nodes
                 if type(self._node(nid)).type_name == class_name]
 
-    def _bulk_add_edges(self, pairs) -> int:
+    def _bulk_add_edges(self, pairs, edge_cls: type) -> int:
         """Додає ребра пачкою з одним сповіщенням; повертає к-ть нових."""
         added = 0
         for a, b in pairs:
             if a != b and not self._g.has_edge(a, b):
-                self._g.add_edge(a, b)
+                self._g.add_edge(a, b, obj=edge_cls())
                 added += 1
         if added:
             self._path_edges.clear()
@@ -217,24 +256,27 @@ class GraphBackend(QObject):
             self.graphChanged.emit()
         return added
 
-    @Slot(str, result=str)
-    def connectClassNodes(self, class_name: str) -> str:
+    @Slot(str, str, result=str)
+    def connectClassNodes(self, class_name: str, edge_class: str) -> str:
         """З'єднує всі вершини класу між собою (кліка)."""
         ids = self._class_ids(class_name)
         if len(ids) < 2:
             return f"У класі «{class_name}» менше двох вершин"
-        added = self._bulk_add_edges(combinations(ids, 2))
+        cls = BaseEdge.registry.get(edge_class, DefaultEdge)
+        added = self._bulk_add_edges(combinations(ids, 2), cls)
         return f"Клас «{class_name}»: додано ребер — {added}"
 
-    @Slot(int, str, result=str)
-    def connectNodeToClass(self, nid: int, class_name: str) -> str:
+    @Slot(int, str, str, result=str)
+    def connectNodeToClass(self, nid: int, class_name: str,
+                           edge_class: str) -> str:
         """З'єднує вершину nid з усіма вершинами класу class_name."""
         if nid not in self._g:
             return ""
         ids = self._class_ids(class_name)
         if not ids or ids == [nid]:
             return f"У класі «{class_name}» немає інших вершин"
-        added = self._bulk_add_edges((nid, other) for other in ids)
+        cls = BaseEdge.registry.get(edge_class, DefaultEdge)
+        added = self._bulk_add_edges(((nid, other) for other in ids), cls)
         return (f"Вершина {self._node(nid).label} → клас «{class_name}»: "
                 f"додано ребер — {added}")
 
@@ -242,7 +284,7 @@ class GraphBackend(QObject):
 
     @Slot(float, float, str)
     def addNode(self, x: float, y: float, class_name: str):
-        cls = NodeMeta.registry.get(class_name, DefaultNode)
+        cls = BaseNode.registry.get(class_name, DefaultNode)
         nid = self._next_id
         self._next_id += 1
         self._g.add_node(nid, obj=cls(x, y, label=str(nid)))
@@ -259,16 +301,46 @@ class GraphBackend(QObject):
         self._node(nid).color = color
         self._model.notify_row(nid, [NodesModel.ColorRole])
 
-    @Slot(int, int, result=bool)
-    def addEdge(self, a: int, b: int) -> bool:
-        if a == b or self._g.has_edge(a, b):
+    @Slot(int, int, str, result=bool)
+    def addEdge(self, a: int, b: int, edge_class: str) -> bool:
+        if a == b or a not in self._g or b not in self._g \
+                or self._g.has_edge(a, b):
             return False
-        self._g.add_edge(a, b)
+        cls = BaseEdge.registry.get(edge_class, DefaultEdge)
+        self._g.add_edge(a, b, obj=cls())
         for nid in (a, b):
             self._model.notify_row(nid, [NodesModel.DegreeRole])
         self.clearHighlight()
         self.graphChanged.emit()
         return True
+
+    @Slot(int, int)
+    def removeEdge(self, a: int, b: int):
+        if not self._g.has_edge(a, b):
+            return
+        self._g.remove_edge(a, b)
+        for nid in (a, b):
+            self._model.notify_row(nid, [NodesModel.DegreeRole])
+        self.clearHighlight()
+        self.graphChanged.emit()
+
+    @Slot(int, int, str)
+    def setEdgeColor(self, a: int, b: int, color: str):
+        if self._g.has_edge(a, b):
+            self._edge(a, b).color = color
+            self.graphChanged.emit()
+
+    @Slot(int, int, float)
+    def setEdgeWidth(self, a: int, b: int, width: float):
+        if self._g.has_edge(a, b):
+            self._edge(a, b).width = width
+            self.graphChanged.emit()
+
+    @Slot(int, int, str)
+    def setEdgeLine(self, a: int, b: int, line: str):
+        if self._g.has_edge(a, b):
+            self._edge(a, b).line = line
+            self.graphChanged.emit()
 
     @Slot(int)
     def removeNode(self, nid: int):
@@ -303,6 +375,27 @@ class GraphBackend(QObject):
         return {"label": node.label, "shape": node.shape,
                 "color": node.color, "x": node.x, "y": node.y,
                 "klass": type(node).type_name}
+
+    @Slot(float, float, result="QVariantMap")
+    def edgeAt(self, x: float, y: float):
+        """Ребро під точкою (x, y): {"a", "b"} або {}. Для хіт-тесту."""
+        hit2 = 7.0 * 7.0                  # допуск влучання у лінію, px^2
+        best, best_d = None, hit2
+        for a, b in self._g.edges():
+            na, nb = self._node(a), self._node(b)
+            d = _point_segment_dist2(x, y, na.x, na.y, nb.x, nb.y)
+            if d <= best_d:
+                best, best_d = (a, b), d
+        return {"a": best[0], "b": best[1]} if best else {}
+
+    @Slot(int, int, result="QVariantMap")
+    def edgeInfo(self, a: int, b: int):
+        if not self._g.has_edge(a, b):
+            return {}
+        edge = self._edge(a, b)
+        return {"label": f"{self._node(a).label}–{self._node(b).label}",
+                "color": edge.color, "width": edge.width, "line": edge.line,
+                "klass": type(edge).type_name}
 
     @Slot(int, float, float)
     def moveNode(self, nid: int, x: float, y: float):
@@ -363,11 +456,13 @@ class GraphBackend(QObject):
     @Slot(result="QVariantList")
     def edgeList(self):
         out = []
-        for a, b in self._g.edges():
+        for a, b, data in self._g.edges(data=True):
             na, nb = self._node(a), self._node(b)
+            edge: BaseEdge = data["obj"]
             out.append({
                 "x1": na.x, "y1": na.y,
                 "x2": nb.x, "y2": nb.y,
+                "color": edge.color, "width": edge.width, "line": edge.line,
                 "inPath": frozenset((a, b)) in self._path_edges,
             })
         return out

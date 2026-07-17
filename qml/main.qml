@@ -5,8 +5,9 @@ import QtQuick.Layouts
 
 /*
  * Головне вікно: режими роботи, робоче поле з ребрами (Canvas)
- * та вершинами (Repeater із Node), панель стилю (StyleMenu).
- * Уся логіка застосунку живе тут; Node і StyleMenu — "дурні" компоненти.
+ * та вершинами (Repeater із Node), панель класів (ClassPanel),
+ * контекстні меню вершини (NodeMenu) та ребра (EdgeMenu).
+ * Уся логіка застосунку живе тут; решта — "дурні" компоненти.
  */
 ApplicationWindow {
     id: root
@@ -22,13 +23,18 @@ ApplicationWindow {
     property int selectedId: -1
     property string statusMsg: ""
 
-    // --- класи вершин ---
-    // кеш backend.classList(); оновлюється за сигналами бекенда
+    // --- класи вершин і ребер ---
+    // кеш backend.classList(родина); оновлюється за сигналами бекенда
     property var nodeClasses: []
-    // клас, який отримають нові вершини
+    property var edgeClasses: []
+    // класи, які отримають нові вершини та нові ребра
     property string currentClass: "Звичайна"
+    property string currentEdgeClass: "Звичайне"
 
-    function refreshClasses() { root.nodeClasses = backend.classList() }
+    function refreshClasses() {
+        root.nodeClasses = backend.classList("node")
+        root.edgeClasses = backend.classList("edge")
+    }
     Component.onCompleted: refreshClasses()
 
     Connections {
@@ -64,6 +70,23 @@ ApplicationWindow {
         nodeMenu.open()
     }
 
+    // Відкрити контекстне меню ребра (a, b) у точці (px, py) робочого поля
+    function openEdgeMenu(a, b, px, py) {
+        var info = backend.edgeInfo(a, b)
+        if (!info.klass)
+            return
+        edgeMenu.targetA = a
+        edgeMenu.targetB = b
+        edgeMenu.targetLabel = info.label
+        edgeMenu.currentLine = info.line
+        edgeMenu.currentWidth = info.width
+        edgeMenu.currentColor = String(info.color)
+        edgeMenu.currentClass = info.klass
+        edgeMenu.x = px
+        edgeMenu.y = py
+        edgeMenu.open()
+    }
+
     function handleNodeTap(id) {
         if (root.mode === 1) {
             if (root.selectedId === -1) {
@@ -71,7 +94,8 @@ ApplicationWindow {
             } else if (root.selectedId === id) {
                 root.selectedId = -1
             } else {
-                if (!backend.addEdge(root.selectedId, id))
+                if (!backend.addEdge(root.selectedId, id,
+                                     root.currentEdgeClass))
                     root.statusMsg = "Таке ребро вже існує"
                 root.selectedId = -1
             }
@@ -109,7 +133,7 @@ ApplicationWindow {
                 text: root.statusMsg !== ""
                       ? root.statusMsg
                       : root.mode === 0
-                        ? "ЛКМ по полю — нова вершина; ПКМ по вершині — меню (стиль/видалити); ПКМ-перетяг між вершинами — ребро"
+                        ? "ЛКМ по полю — нова вершина; ПКМ по вершині чи ребру — меню; ПКМ-перетяг між вершинами — ребро"
                         : root.mode === 1
                           ? (root.selectedId === -1
                              ? "Оберіть першу вершину ребра (або ПКМ-перетяг між вершинами)"
@@ -123,21 +147,32 @@ ApplicationWindow {
         }
     }
 
-    // ==================== Панель класів вершин ====================
+    // ============ Панель класів елементів (вершин і ребер) ============
     ClassPanel {
         id: classPanel
         anchors { left: parent.left; top: parent.top; bottom: parent.bottom }
 
-        classes: root.nodeClasses
-        currentClass: root.currentClass
+        nodeClasses: root.nodeClasses
+        edgeClasses: root.edgeClasses
+        currentNodeClass: root.currentClass
+        currentEdgeClass: root.currentEdgeClass
 
-        onClassPicked: function (name) { root.currentClass = name }
-        onConnectClassRequested: function (name) {
-            root.statusMsg = backend.connectClassNodes(name)
-        }
-        onCreateRequested: function (name, shape, color) {
-            if (backend.createNodeClass(name, shape, color)) {
+        onClassPicked: function (family, name) {
+            if (family === "node")
                 root.currentClass = name
+            else
+                root.currentEdgeClass = name
+        }
+        onConnectClassRequested: function (name) {
+            root.statusMsg = backend.connectClassNodes(name,
+                                                       root.currentEdgeClass)
+        }
+        onCreateRequested: function (family, name, design) {
+            if (backend.createClass(family, name, design)) {
+                if (family === "node")
+                    root.currentClass = name
+                else
+                    root.currentEdgeClass = name
                 classPanel.resetForm()
             } else {
                 root.statusMsg = "Клас «" + name + "» вже існує"
@@ -199,8 +234,13 @@ ApplicationWindow {
                 if (mouse.button !== Qt.RightButton)
                     return
                 var id = backend.nodeAt(mouse.x, mouse.y)
-                if (id === -1)
+                if (id === -1) {
+                    // ПКМ повз вершини — можливо, влучили в ребро
+                    var edge = backend.edgeAt(mouse.x, mouse.y)
+                    if (edge.a !== undefined)
+                        root.openEdgeMenu(edge.a, edge.b, mouse.x, mouse.y)
                     return
+                }
                 var info = backend.nodeInfo(id)
                 root.edgeSourceId = id
                 root.edgeSrcX = info.x
@@ -225,7 +265,7 @@ ApplicationWindow {
                 root.edgeSourceId = -1
                 var tgt = backend.nodeAt(mouse.x, mouse.y)
                 if (tgt !== -1 && tgt !== src) {
-                    if (!backend.addEdge(src, tgt))
+                    if (!backend.addEdge(src, tgt, root.currentEdgeClass))
                         root.statusMsg = "Таке ребро вже існує"
                 } else if (tgt === src) {
                     // Відпустили на тій самій вершині — контекстне меню
@@ -239,6 +279,12 @@ ApplicationWindow {
         Canvas {
             id: canvas
             anchors.fill: parent
+            // штрихування за стилем лінії класу/ребра
+            function dashOf(line) {
+                return line === "dash" ? [8, 6]
+                     : line === "dot"  ? [2, 5] : []
+            }
+
             onPaint: {
                 var ctx = getContext("2d")
                 ctx.clearRect(0, 0, width, height)
@@ -246,13 +292,15 @@ ApplicationWindow {
                 for (var i = 0; i < edges.length; i++) {
                     var e = edges[i]
                     ctx.strokeStyle = String(e.inPath ? Theme.edgeHighlight
-                                                      : Theme.edge)
-                    ctx.lineWidth = e.inPath ? 4.5 : 2.5
+                                                      : e.color)
+                    ctx.lineWidth = e.inPath ? e.width + 2 : e.width
+                    ctx.setLineDash(dashOf(e.line))
                     ctx.beginPath()
                     ctx.moveTo(e.x1, e.y1)
                     ctx.lineTo(e.x2, e.y2)
                     ctx.stroke()
                 }
+                ctx.setLineDash([])
 
                 // Пунктирна "гумка" під час створення ребра ПКМ
                 if (root.edgeSourceId !== -1) {
@@ -310,7 +358,8 @@ ApplicationWindow {
             }
             onConnectToClassRequested: function (name) {
                 if (targetId !== -1)
-                    root.statusMsg = backend.connectNodeToClass(targetId, name)
+                    root.statusMsg = backend.connectNodeToClass(
+                        targetId, name, root.currentEdgeClass)
             }
             onShapePicked: function (shape) {
                 if (targetId === -1)
@@ -330,6 +379,46 @@ ApplicationWindow {
                     if (root.selectedId === targetId)
                         root.resetSelection()
                 }
+                close()
+            }
+        }
+
+        // Контекстне меню ребра (ПКМ по ребру): стиль лінії + видалення
+        EdgeMenu {
+            id: edgeMenu
+            classes: root.edgeClasses
+
+            onLinePicked: function (line) {
+                if (targetA === -1)
+                    return
+                backend.setEdgeLine(targetA, targetB, line)
+                currentLine = line
+            }
+            onWidthPicked: function (width) {
+                if (targetA === -1)
+                    return
+                backend.setEdgeWidth(targetA, targetB, width)
+                currentWidth = width
+            }
+            onColorPicked: function (color) {
+                if (targetA === -1)
+                    return
+                backend.setEdgeColor(targetA, targetB, color)
+                currentColor = color
+            }
+            onClassPicked: function (name) {
+                if (targetA === -1)
+                    return
+                backend.setEdgeClass(targetA, targetB, name)
+                currentClass = name
+                var info = backend.edgeInfo(targetA, targetB)
+                currentLine = info.line
+                currentWidth = info.width
+                currentColor = String(info.color)
+            }
+            onRemoveRequested: {
+                if (targetA !== -1)
+                    backend.removeEdge(targetA, targetB)
                 close()
             }
         }
