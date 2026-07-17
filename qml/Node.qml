@@ -20,6 +20,8 @@ Item {
     required property string nodeShape
     required property color nodeColor
     required property string nodeClass
+    required property string nodeDescription
+    required property real nodeOpacity
 
     // --- стан, який задає власник ---
     property bool draggable: false     // режим переміщення
@@ -43,47 +45,85 @@ Item {
         hoverArea.containsMouse ? Theme.foreground
                                 : Qt.alpha(Theme.foreground, 0.78)
 
+    // Уся графіка вершини малюється QtQuick.Shapes.
+    // NodeShape — Shape на весь Item з рендерером кривих (гладкі дуги);
+    // NodeFill  — ShapePath із заливкою кольором вершини та обведенням.
+    component NodeShape: Shape {
+        anchors.fill: parent
+        preferredRendererType: Shape.CurveRenderer
+    }
+    component NodeFill: ShapePath {
+        fillColor: node.nodeColor
+        strokeColor: node.strokeColor
+        strokeWidth: 2
+        joinStyle: ShapePath.RoundJoin
+    }
+
     // Кільце стану: шлях / вибір / редагування стилю
-    Rectangle {
+    Shape {
         anchors.centerIn: parent
         width: parent.width + 12
         height: parent.height + 12
-        radius: width / 2
-        color: "transparent"
-        border.width: 3
-        border.color: node.inPath ? Theme.edgeHighlight
-                                  : Theme.selection
+        preferredRendererType: Shape.CurveRenderer
         visible: node.inPath || node.selected
+        ShapePath {
+            fillColor: "transparent"
+            strokeColor: node.inPath ? Theme.edgeHighlight
+                                     : Theme.selection
+            strokeWidth: 3
+            PathAngleArc {
+                centerX: node.width / 2 + 6
+                centerY: node.height / 2 + 6
+                radiusX: node.width / 2 + 4.5
+                radiusY: node.height / 2 + 4.5
+                startAngle: 0
+                sweepAngle: 360
+            }
+        }
     }
 
     // --- форми ---
-    Rectangle {   // коло та квадрат
-        visible: node.nodeShape === "circle" || node.nodeShape === "square"
-        anchors.fill: parent
-        radius: node.nodeShape === "circle" ? width / 2 : 7
-        color: node.nodeColor
-        border.color: node.strokeColor
-        border.width: 2
+    NodeShape {   // коло
+        visible: node.nodeShape === "circle"
+        opacity: node.nodeOpacity
+        NodeFill {
+            PathAngleArc {
+                centerX: node.width / 2
+                centerY: node.height / 2
+                radiusX: node.width / 2 - 1
+                radiusY: node.height / 2 - 1
+                startAngle: 0
+                sweepAngle: 360
+            }
+        }
     }
-    Rectangle {   // ромб — повернутий квадрат
+    NodeShape {   // квадрат
+        visible: node.nodeShape === "square"
+        opacity: node.nodeOpacity
+        NodeFill {
+            PathRectangle {
+                x: 1; y: 1
+                width: node.width - 2
+                height: node.height - 2
+                radius: 7
+            }
+        }
+    }
+    NodeShape {   // ромб
         visible: node.nodeShape === "diamond"
-        anchors.centerIn: parent
-        width: parent.width * 0.76
-        height: width
-        rotation: 45
-        radius: 5
-        color: node.nodeColor
-        border.color: node.strokeColor
-        border.width: 2
+        opacity: node.nodeOpacity
+        NodeFill {
+            startX: node.width / 2; startY: 2
+            PathLine { x: node.width - 2; y: node.height / 2 }
+            PathLine { x: node.width / 2; y: node.height - 2 }
+            PathLine { x: 2;              y: node.height / 2 }
+            PathLine { x: node.width / 2; y: 2 }
+        }
     }
-    Shape {       // трикутник
+    NodeShape {   // трикутник
         visible: node.nodeShape === "triangle"
-        anchors.fill: parent
-        ShapePath {
-            fillColor: node.nodeColor
-            strokeColor: node.strokeColor
-            strokeWidth: 2
-            joinStyle: ShapePath.RoundJoin
+        opacity: node.nodeOpacity
+        NodeFill {
             startX: node.width / 2; startY: 2
             PathLine { x: node.width - 2; y: node.height - 3 }
             PathLine { x: 2;              y: node.height - 3 }
@@ -106,16 +146,25 @@ Item {
     }
 
     // Бейдж зі ступенем вершини
-    Rectangle {
+    Shape {
         visible: node.degree > 0
-        width: 18; height: 18; radius: 9
-        color: Theme.badge
-        border.color: Theme.edge
-        border.width: 1
+        width: 18; height: 18
+        preferredRendererType: Shape.CurveRenderer
         anchors.right: parent.right
         anchors.top: parent.top
         anchors.rightMargin: -5
         anchors.topMargin: -5
+        ShapePath {
+            fillColor: Theme.badge
+            strokeColor: Theme.edge
+            strokeWidth: 1
+            PathAngleArc {
+                centerX: 9; centerY: 9
+                radiusX: 8.5; radiusY: 8.5
+                startAngle: 0
+                sweepAngle: 360
+            }
+        }
         Text {
             anchors.centerIn: parent
             text: node.degree
@@ -130,6 +179,7 @@ Item {
     ToolTip.delay: 350
     ToolTip.text: "Вершина " + label + "  •  клас: " + nodeClass
                   + "  •  ступінь: " + degree
+                  + (nodeDescription !== "" ? "\n" + nodeDescription : "")
 
     MouseArea {
         id: hoverArea

@@ -4,14 +4,15 @@ import sys
 from pathlib import Path
 
 from PySide6.QtGui import QGuiApplication
-from PySide6.QtQml import QQmlApplicationEngine
+from PySide6.QtQml import QQmlApplicationEngine, qmlRegisterType
 
-from graphs import GraphBackend
+from graphs import EdgeLayer, GraphBackend
 
 
 def main() -> int:
     app = QGuiApplication(sys.argv)
 
+    qmlRegisterType(EdgeLayer, "Graphs", 1, 0, "EdgeLayer")
     backend = GraphBackend()
 
     engine = QQmlApplicationEngine()

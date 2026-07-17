@@ -13,25 +13,42 @@ Popup {
 
     property int targetId: -1          // яку вершину редагуємо/видаляємо
     property string targetLabel: ""
+    property string currentDescription: ""
     property string currentShape: "circle"
     property string currentColor: Theme.nodePalette[0]
+    property real currentOpacity: 1.0
     property string currentClass: ""   // клас цієї вершини
-    property var classes: []           // [{name, shape, color, count}]
+    property var classes: []           // [{name, shape, color, opacity, count}]
 
     readonly property var classNames: classes.map(function (c) { return c.name })
 
+    signal labelEdited(string text)
+    signal descriptionEdited(string text)
     signal shapePicked(string shape)
     signal colorPicked(string color)
+    signal opacityPicked(real opacity)
     signal classPicked(string name)
     signal connectToClassRequested(string name)
     signal removeRequested()
 
+    // TextArea не розрізняє редагування користувача і програмний запис,
+    // тож на час заповнення полів при відкритті глушимо сигнали
+    property bool syncing: false
+
     // ComboBox рве прив'язку currentIndex після вибору користувача,
     // тож виставляємо індекс щоразу при відкритті
     onOpened: {
+        syncing = true
+        labelField.text = targetLabel
+        descArea.text = currentDescription
+        opacitySlider.value = currentOpacity
         classCombo.currentIndex = classNames.indexOf(currentClass)
         connectCombo.currentIndex = -1
+        syncing = false
     }
+
+    // зміна класу вершини скидає прозорість на дизайн класу
+    onCurrentOpacityChanged: opacitySlider.value = currentOpacity
 
     padding: 0
     modal: false
@@ -68,6 +85,34 @@ Popup {
                 color: Theme.foreground
                 font.bold: true
                 font.pixelSize: 14
+            }
+
+            Label { text: "Текст"; color: Theme.mutedText; font.pixelSize: 12 }
+
+            TextField {
+                id: labelField
+                Layout.fillWidth: true
+                placeholderText: "Підпис вершини"
+                onTextEdited: menu.labelEdited(text)
+            }
+
+            Label { text: "Опис"; color: Theme.mutedText; font.pixelSize: 12 }
+
+            ScrollView {
+                Layout.fillWidth: true
+                Layout.preferredHeight: 56
+                clip: true
+
+                TextArea {
+                    id: descArea
+                    placeholderText: "Опис вершини…"
+                    wrapMode: TextArea.Wrap
+                    font.pixelSize: 12
+                    onTextChanged: {
+                        if (!menu.syncing)
+                            menu.descriptionEdited(text)
+                    }
+                }
             }
 
             Label { text: "Форма"; color: Theme.mutedText; font.pixelSize: 12 }
@@ -131,6 +176,29 @@ Popup {
                         }
                     }
                 }
+            }
+
+            RowLayout {
+                Layout.fillWidth: true
+                Label {
+                    text: "Прозорість"
+                    color: Theme.mutedText
+                    font.pixelSize: 12
+                    Layout.fillWidth: true
+                }
+                Label {
+                    text: Math.round(opacitySlider.value * 100) + "%"
+                    color: Theme.mutedText
+                    font.pixelSize: 12
+                }
+            }
+
+            Slider {
+                id: opacitySlider
+                Layout.fillWidth: true
+                from: 0.1
+                to: 1.0
+                onMoved: menu.opacityPicked(value)
             }
 
             Label { text: "Клас"; color: Theme.mutedText; font.pixelSize: 12 }

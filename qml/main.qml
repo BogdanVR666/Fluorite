@@ -2,19 +2,20 @@ import QtQuick
 import QtQuick.Controls
 import QtQuick.Dialogs
 import QtQuick.Layouts
+import Graphs
 
 /*
- * Головне вікно: режими роботи, робоче поле з ребрами (Canvas)
- * та вершинами (Repeater із Node), панель класів (ClassPanel),
- * контекстні меню вершини (NodeMenu) та ребра (EdgeMenu).
- * Уся логіка застосунку живе тут; решта — "дурні" компоненти.
+ * Головне вікно: режими роботи, робоче поле з ребрами (EdgeLayer,
+ * малюється на боці Python) та вершинами (Repeater із Node), панель
+ * класів (ClassPanel), контекстні меню вершини (NodeMenu) та ребра
+ * (EdgeMenu). Уся логіка застосунку живе тут; решта — "дурні" компоненти.
  */
 ApplicationWindow {
     id: root
     width: 1100
     height: 720
     visible: true
-    title: "Graph IDE"
+    title: "Fluorite"
     color: Theme.background
 
     // Режими: 0 — вершина, 1 — ребро, 2 — переміщення, 3 — найкоротший шлях
@@ -62,8 +63,10 @@ ApplicationWindow {
         var info = backend.nodeInfo(id)
         nodeMenu.targetId = id
         nodeMenu.targetLabel = info.label
+        nodeMenu.currentDescription = info.description
         nodeMenu.currentShape = info.shape
         nodeMenu.currentColor = String(info.color)
+        nodeMenu.currentOpacity = info.opacity
         nodeMenu.currentClass = info.klass
         nodeMenu.x = px
         nodeMenu.y = py
@@ -166,6 +169,9 @@ ApplicationWindow {
         onConnectClassRequested: function (name) {
             root.statusMsg = backend.connectClassNodes(name,
                                                        root.currentEdgeClass)
+        }
+        onUpdateRequested: function (family, name, design) {
+            backend.updateClass(family, name, design)
         }
         onCreateRequested: function (family, name, design) {
             if (backend.createClass(family, name, design)) {
@@ -275,56 +281,33 @@ ApplicationWindow {
             }
         }
 
-        // Шар ребер — координати запитуємо у бекенда
+        // Шар ребер: Python малює їх напряму з графа (без edgeList)
+        // і сам перемальовується за сигналами бекенда
+        EdgeLayer {
+            anchors.fill: parent
+            source: backend
+            highlightColor: Theme.edgeHighlight
+        }
+
+        // Пунктирна "гумка" під час створення ребра ПКМ;
+        // перемальовується лише під час right-drag
         Canvas {
             id: canvas
             anchors.fill: parent
-            // штрихування за стилем лінії класу/ребра
-            function dashOf(line) {
-                return line === "dash" ? [8, 6]
-                     : line === "dot"  ? [2, 5] : []
-            }
-
             onPaint: {
                 var ctx = getContext("2d")
                 ctx.clearRect(0, 0, width, height)
-                var edges = backend.edgeList()
-                for (var i = 0; i < edges.length; i++) {
-                    var e = edges[i]
-                    ctx.strokeStyle = String(e.inPath ? Theme.edgeHighlight
-                                                      : e.color)
-                    ctx.lineWidth = e.inPath ? e.width + 2 : e.width
-                    ctx.setLineDash(dashOf(e.line))
-                    ctx.beginPath()
-                    ctx.moveTo(e.x1, e.y1)
-                    ctx.lineTo(e.x2, e.y2)
-                    ctx.stroke()
-                }
+                if (root.edgeSourceId === -1)
+                    return
+                ctx.strokeStyle = String(Theme.selection)
+                ctx.lineWidth = 3
+                ctx.setLineDash([6, 5])
+                ctx.beginPath()
+                ctx.moveTo(root.edgeSrcX, root.edgeSrcY)
+                ctx.lineTo(root.edgeDragX, root.edgeDragY)
+                ctx.stroke()
                 ctx.setLineDash([])
-
-                // Пунктирна "гумка" під час створення ребра ПКМ
-                if (root.edgeSourceId !== -1) {
-                    ctx.strokeStyle = String(Theme.selection)
-                    ctx.lineWidth = 3
-                    ctx.setLineDash([6, 5])
-                    ctx.beginPath()
-                    ctx.moveTo(root.edgeSrcX, root.edgeSrcY)
-                    ctx.lineTo(root.edgeDragX, root.edgeDragY)
-                    ctx.stroke()
-                    ctx.setLineDash([])
-                }
             }
-        }
-
-        Connections {
-            target: backend
-            function onGraphChanged() { canvas.requestPaint() }
-        }
-
-        // при зміні теми ребра теж треба перемалювати
-        Connections {
-            target: Theme
-            function onColorsChanged() { canvas.requestPaint() }
         }
 
         // Шар вершин — модель приходить із Python
@@ -355,6 +338,25 @@ ApplicationWindow {
                 var info = backend.nodeInfo(targetId)
                 currentShape = info.shape
                 currentColor = String(info.color)
+                currentOpacity = info.opacity
+            }
+            onLabelEdited: function (text) {
+                if (targetId === -1)
+                    return
+                backend.setNodeLabel(targetId, text)
+                targetLabel = text
+            }
+            onDescriptionEdited: function (text) {
+                if (targetId === -1)
+                    return
+                backend.setNodeDescription(targetId, text)
+                currentDescription = text
+            }
+            onOpacityPicked: function (opacity) {
+                if (targetId === -1)
+                    return
+                backend.setNodeOpacity(targetId, opacity)
+                currentOpacity = opacity
             }
             onConnectToClassRequested: function (name) {
                 if (targetId !== -1)

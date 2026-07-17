@@ -2,26 +2,40 @@
 
 NodesModel   — QAbstractListModel поверх вершин nx.Graph для QML.
 GraphBackend — фасад над nx.Graph: редагування, алгоритми, статистика.
+EdgeLayer    — QQuickPaintedItem, що малює всі ребра напряму з графа.
 
 Вершини і ребра графа — це об'єкти родин елементів (нащадки BaseNode
 та BaseEdge, див. elements.py); nx.Graph зберігає їх в атрибуті "obj"
 вершини (за цілим ключем nodeId) чи ребра (за парою ключів).
+
+Сигнали бекенда розділені за вартістю реакції: graphChanged — зміна
+структури (перераховуються статистика і лічильники класів),
+edgesChanged — лише геометрія чи стиль ребер (тільки перемалювання
+шару ребер). Завдяки цьому перетягування вершини не перераховує
+компоненти зв'язності й класи на кожен рух миші.
 """
 
 from itertools import combinations
+from time import monotonic
 
 import networkx as nx
 from PySide6.QtCore import (
     Property,
     QAbstractListModel,
     QByteArray,
+    QLineF,
     QModelIndex,
     QObject,
+    QPointF,
+    QSize,
     Qt,
+    QTimer,
     QUrl,
     Signal,
     Slot,
 )
+from PySide6.QtGui import QColor, QImage, QPainter, QPen
+from PySide6.QtQuick import QQuickPaintedItem
 
 import storage
 from edges import BaseEdge, DefaultEdge
@@ -52,11 +66,14 @@ class NodesModel(QAbstractListModel):
     ShapeRole = Qt.UserRole + 7
     ColorRole = Qt.UserRole + 8
     ClassRole = Qt.UserRole + 9
+    DescriptionRole = Qt.UserRole + 10
+    OpacityRole = Qt.UserRole + 11
 
     def __init__(self, graph: nx.Graph, parent=None):
         super().__init__(parent)
         self._g = graph
         self._ids: list[int] = []          # порядок рядків моделі
+        self._rows: dict[int, int] = {}    # nodeId → рядок, O(1) для row_of
         self._path_nodes: set[int] = set() # вершини підсвіченого шляху
 
     # --- обов'язковий інтерфейс QAbstractListModel ---
@@ -75,6 +92,8 @@ class NodesModel(QAbstractListModel):
             self.ShapeRole: QByteArray(b"nodeShape"),
             self.ColorRole: QByteArray(b"nodeColor"),
             self.ClassRole: QByteArray(b"nodeClass"),
+            self.DescriptionRole: QByteArray(b"nodeDescription"),
+            self.OpacityRole: QByteArray(b"nodeOpacity"),
         }
 
     def data(self, index, role):
@@ -100,23 +119,31 @@ class NodesModel(QAbstractListModel):
             return node.color
         if role == self.ClassRole:
             return type(node).type_name
+        if role == self.DescriptionRole:
+            return node.description
+        if role == self.OpacityRole:
+            return node.opacity
         return None
 
     # --- допоміжні методи для бекенда ---
 
     def row_of(self, nid: int) -> int:
-        return self._ids.index(nid)
+        return self._rows[nid]
 
     def append_node(self, nid: int):
         row = len(self._ids)
         self.beginInsertRows(QModelIndex(), row, row)
         self._ids.append(nid)
+        self._rows[nid] = row
         self.endInsertRows()
 
     def remove_node(self, nid: int):
         row = self.row_of(nid)
         self.beginRemoveRows(QModelIndex(), row, row)
         self._ids.pop(row)
+        del self._rows[nid]
+        for i in range(row, len(self._ids)):   # рядки нижче зсунулись
+            self._rows[self._ids[i]] = i
         self._path_nodes.discard(nid)
         self.endRemoveRows()
 
@@ -138,12 +165,14 @@ class NodesModel(QAbstractListModel):
         """Повністю замінює рядки моделі (після завантаження з файла)."""
         self.beginResetModel()
         self._ids = list(ids)
+        self._rows = {nid: i for i, nid in enumerate(self._ids)}
         self._path_nodes.clear()
         self.endResetModel()
 
     def reset_all(self):
         self.beginResetModel()
         self._ids.clear()
+        self._rows.clear()
         self._path_nodes.clear()
         self.endResetModel()
 
@@ -151,7 +180,9 @@ class NodesModel(QAbstractListModel):
 class GraphBackend(QObject):
     """Тримає nx.Graph і надає QML операції над ним."""
 
-    graphChanged = Signal()
+    graphChanged = Signal()     # структура: статистика, лічильники класів
+    edgesChanged = Signal()     # стиль/підсвітка ребер — перемалювання
+    nodeMoved = Signal(int, float, float)   # рух вершини: (nid, x, y)
     classesChanged = Signal()   # з'явився новий клас вершин
 
     def __init__(self, parent=None):
@@ -215,6 +246,28 @@ class GraphBackend(QObject):
         self.classesChanged.emit()
         return True
 
+    @Slot(str, str, "QVariantMap", result=bool)
+    def updateClass(self, family: str, name: str, design: dict) -> bool:
+        """Змінює дизайн наявного класу; елементи без власних перекриттів
+        підхоплюють його одразу (StyleAttr читає default_* динамічно)."""
+        root = ElementMeta.families.get(family)
+        if root is None:
+            return False
+        cls = root.registry.get(name)
+        if cls is None:
+            return False
+        for field, value in design.items():
+            if field in root.style_fields:
+                setattr(cls, "default_" + field, value)
+        if family == "node":
+            self._model.notify_all([NodesModel.ShapeRole,
+                                    NodesModel.ColorRole,
+                                    NodesModel.OpacityRole])
+        else:
+            self.edgesChanged.emit()   # кеш EdgeLayer стане недійсним
+        self.classesChanged.emit()
+        return True
+
     @Slot(int, str)
     def setNodeClass(self, nid: int, class_name: str):
         cls = BaseNode.registry.get(class_name)
@@ -222,9 +275,11 @@ class GraphBackend(QObject):
             return
         old = self._node(nid)
         # новий об'єкт без перекриттів стилю — вершина приймає дизайн класу
-        self._g.nodes[nid]["obj"] = cls(old.x, old.y, old.label)
+        self._g.nodes[nid]["obj"] = cls(old.x, old.y, old.label,
+                                        old.description)
         self._model.notify_row(nid, [NodesModel.ShapeRole,
                                      NodesModel.ColorRole,
+                                     NodesModel.OpacityRole,
                                      NodesModel.ClassRole])
         self.graphChanged.emit()   # у classList змінились лічильники
 
@@ -301,6 +356,21 @@ class GraphBackend(QObject):
         self._node(nid).color = color
         self._model.notify_row(nid, [NodesModel.ColorRole])
 
+    @Slot(int, float)
+    def setNodeOpacity(self, nid: int, opacity: float):
+        self._node(nid).opacity = opacity
+        self._model.notify_row(nid, [NodesModel.OpacityRole])
+
+    @Slot(int, str)
+    def setNodeLabel(self, nid: int, text: str):
+        self._node(nid).label = text
+        self._model.notify_row(nid, [NodesModel.LabelRole])
+
+    @Slot(int, str)
+    def setNodeDescription(self, nid: int, text: str):
+        self._node(nid).description = text
+        self._model.notify_row(nid, [NodesModel.DescriptionRole])
+
     @Slot(int, int, str, result=bool)
     def addEdge(self, a: int, b: int, edge_class: str) -> bool:
         if a == b or a not in self._g or b not in self._g \
@@ -328,19 +398,19 @@ class GraphBackend(QObject):
     def setEdgeColor(self, a: int, b: int, color: str):
         if self._g.has_edge(a, b):
             self._edge(a, b).color = color
-            self.graphChanged.emit()
+            self.edgesChanged.emit()
 
     @Slot(int, int, float)
     def setEdgeWidth(self, a: int, b: int, width: float):
         if self._g.has_edge(a, b):
             self._edge(a, b).width = width
-            self.graphChanged.emit()
+            self.edgesChanged.emit()
 
     @Slot(int, int, str)
     def setEdgeLine(self, a: int, b: int, line: str):
         if self._g.has_edge(a, b):
             self._edge(a, b).line = line
-            self.graphChanged.emit()
+            self.edgesChanged.emit()
 
     @Slot(int)
     def removeNode(self, nid: int):
@@ -372,8 +442,9 @@ class GraphBackend(QObject):
         if nid not in self._g:
             return {}
         node = self._node(nid)
-        return {"label": node.label, "shape": node.shape,
-                "color": node.color, "x": node.x, "y": node.y,
+        return {"label": node.label, "description": node.description,
+                "shape": node.shape, "color": node.color,
+                "opacity": node.opacity, "x": node.x, "y": node.y,
                 "klass": type(node).type_name}
 
     @Slot(float, float, result="QVariantMap")
@@ -403,7 +474,9 @@ class GraphBackend(QObject):
         node.x = x
         node.y = y
         self._model.notify_row(nid, [NodesModel.XRole, NodesModel.YRole])
-        self.graphChanged.emit()
+        # структура не змінилась — статистику й класи не перераховуємо,
+        # а шар ребер оновлює лише лінії цієї вершини
+        self.nodeMoved.emit(nid, x, y)
 
     @Slot()
     def clear(self):
@@ -451,22 +524,6 @@ class GraphBackend(QObject):
         return (f"Відкрито: {path}  (вершин: {self._g.number_of_nodes()}, "
                 f"ребер: {self._g.number_of_edges()})")
 
-    # --- дані для малювання ребер ---
-
-    @Slot(result="QVariantList")
-    def edgeList(self):
-        out = []
-        for a, b, data in self._g.edges(data=True):
-            na, nb = self._node(a), self._node(b)
-            edge: BaseEdge = data["obj"]
-            out.append({
-                "x1": na.x, "y1": na.y,
-                "x2": nb.x, "y2": nb.y,
-                "color": edge.color, "width": edge.width, "line": edge.line,
-                "inPath": frozenset((a, b)) in self._path_edges,
-            })
-        return out
-
     # --- алгоритми NetworkX ---
 
     @Slot(int, int, result=str)
@@ -475,11 +532,10 @@ class GraphBackend(QObject):
             path = nx.shortest_path(self._g, a, b)
         except nx.NetworkXNoPath:
             self.clearHighlight()
-            self.graphChanged.emit()
             return "Шляху між цими вершинами не існує"
         self._path_edges = {frozenset(p) for p in zip(path, path[1:])}
         self._model.set_path(set(path))
-        self.graphChanged.emit()
+        self.edgesChanged.emit()
         labels = [self._node(n).label for n in path]
         return (f"Найкоротший шлях: {' → '.join(labels)}  "
                 f"(довжина {len(path) - 1})")
@@ -488,4 +544,228 @@ class GraphBackend(QObject):
     def clearHighlight(self):
         self._path_edges.clear()
         self._model.set_path(set())
-        self.graphChanged.emit()
+        self.edgesChanged.emit()
+
+
+class EdgeLayer(QQuickPaintedItem):
+    """Шар ребер: малює їх напряму з nx.Graph одним проходом QPainter.
+
+    Заміна пари Canvas + edgeList(): дані не конвертуються у QVariant
+    на кожен кадр, а ребра групуються за пером (колір, товщина, штрих,
+    підсвітка шляху), тож QPainter отримує кілька викликів drawLines
+    замість тисяч окремих stroke. Перемальовується за сигналами бекенда
+    graphChanged (структура) та edgesChanged (геометрія/стиль).
+
+    Малювання йде у власний буфер ARGB32_Premultiplied, який потім
+    копіюється у painter вузла одним drawImage у режимі Source. Це
+    принципово: під RHI текстура QQuickPaintedItem має формат
+    RGBA8888, для якого у растрового рушія немає оптимізованих функцій
+    змішування — лінії малюються у ~6–7 разів повільніше (виміряно:
+    32 мс проти 4.8 мс на 1225 ребрах). Конвертація ж усієї поверхні
+    разом із копіюванням — один швидкий прохід (~1–2 мс).
+
+    Адаптивна якість: під час шквалу оновлень (перетягування вершини)
+    у великому графі кадри малюються без згладжування (AA — це ще ~6×
+    вартості растеризації), а після паузи _REFINE_MS таймер домальовує
+    чистовий кадр з AA. Важливо: QQuickPaintedItem сам вмикає AA-хінт
+    ще до виклику paint(), тож стан хінта виставляється явно в обидва
+    боки. На HiDPI у швидкому режимі текстура зменшується до логічного
+    розміру: площа менша у dpr², а трансформація лишається identity.
+
+    Геометрія кешується між кадрами: повна перебудова QLineF-ів лише при
+    зміні структури чи стилю (graphChanged/edgesChanged); рух вершини
+    (nodeMoved) мутує тільки її інцидентні лінії прямо в кеші.
+    """
+
+    sourceChanged = Signal()
+    highlightColorChanged = Signal()
+
+    # штрихи Canvas-версії у пікселях; QPen чекає їх в одиницях товщини
+    _DASHES = {"dash": (8.0, 6.0), "dot": (2.0, 5.0)}
+
+    _FAST_EDGES = 300    # від скількох ребер вмикається швидкий режим
+    _BURST_GAP = 0.1     # с між оновленнями, щоб вважати їх шквалом
+    _REFINE_MS = 150     # пауза тиші перед чистовим кадром
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._backend: GraphBackend | None = None
+        self._highlight = QColor("#2ecc71")
+        # кеш геометрії: перо → [QLineF]; вершина → [(QLineF, чи кінець P1)]
+        self._groups: dict[tuple, list[QLineF]] | None = None
+        self._incident: dict[int, list[tuple[QLineF, bool]]] = {}
+        self._fast = False           # поточні кадри — швидкі (шквал)
+        self._low_res = False        # текстура зараз зменшена
+        self._buffer: QImage | None = None   # ARGB32-буфер малювання
+        self._last_request = 0.0
+        self._refine = QTimer(self)
+        self._refine.setSingleShot(True)
+        self._refine.setInterval(self._REFINE_MS)
+        self._refine.timeout.connect(self._refine_pass)
+
+    def _enter_fast(self):
+        """Вмикає швидкий режим (якщо граф великий) і планує чистовий кадр."""
+        if (self._backend is None
+                or self._backend._g.number_of_edges() < self._FAST_EDGES):
+            return
+        if not self._fast:
+            self._fast = True
+            w, h = self.width(), self.height()
+            dpr = (self.window().effectiveDevicePixelRatio()
+                   if self.window() else 1.0)
+            # на HiDPI малюємо в текстуру логічного розміру: площа менша
+            # у dpr², а трансформація лишається identity (швидкий шлях
+            # растеризатора ліній). На dpr=1 зиску немає — не чіпаємо.
+            if w > 0 and h > 0 and dpr > 1.01:
+                self.setTextureSize(QSize(max(1, int(w)), max(1, int(h))))
+                self._low_res = True
+        self._refine.start()
+
+    def _request(self):
+        """Запит перемалювання; детектор шквалу оновлень."""
+        now = monotonic()
+        if now - self._last_request < self._BURST_GAP:
+            self._enter_fast()
+        self._last_request = now
+        self.update()
+
+    def _mark_dirty(self):
+        """Структура чи стиль змінились — кеш геометрії недійсний."""
+        self._groups = None
+        self._request()
+
+    def _node_moved(self, nid: int, x: float, y: float):
+        if self._groups is not None:
+            point = QPointF(x, y)
+            for line, at_p1 in self._incident.get(nid, ()):
+                if at_p1:
+                    line.setP1(point)
+                else:
+                    line.setP2(point)
+        # перетягування інтерактивне з першого ж кадру, без детектора
+        self._enter_fast()
+        self._last_request = monotonic()
+        self.update()
+
+    def _refine_pass(self):
+        self._fast = False
+        if self._low_res:
+            self._low_res = False
+            self.setTextureSize(QSize())    # авто: розмір елемента × DPR
+        self.update()
+
+    def _source(self):
+        return self._backend
+
+    def _set_source(self, backend):
+        if backend is self._backend:
+            return
+        if self._backend is not None:
+            try:
+                self._backend.graphChanged.disconnect(self._mark_dirty)
+                self._backend.edgesChanged.disconnect(self._mark_dirty)
+                self._backend.nodeMoved.disconnect(self._node_moved)
+            except RuntimeError:
+                pass    # бекенд уже знищується разом із застосунком
+        self._backend = backend
+        if backend is not None:
+            backend.graphChanged.connect(self._mark_dirty)
+            backend.edgesChanged.connect(self._mark_dirty)
+            backend.nodeMoved.connect(self._node_moved)
+        self._groups = None
+        self.sourceChanged.emit()
+        self.update()
+
+    source = Property(QObject, _source, _set_source, notify=sourceChanged)
+
+    def _highlight_color(self):
+        return self._highlight
+
+    def _set_highlight_color(self, color):
+        color = QColor(color)
+        if color == self._highlight:
+            return
+        self._highlight = color
+        self.highlightColorChanged.emit()
+        self.update()
+
+    highlightColor = Property(QColor, _highlight_color,
+                              _set_highlight_color,
+                              notify=highlightColorChanged)
+
+    def _rebuild(self):
+        """Повна перебудова кешу геометрії з графа."""
+        g = self._backend._g
+        path = self._backend._path_edges
+        nodes = g.nodes
+        groups: dict[tuple, list[QLineF]] = {}
+        incident: dict[int, list[tuple[QLineF, bool]]] = {}
+        for a, b, data in g.edges(data=True):
+            edge: BaseEdge = data["obj"]
+            na, nb = nodes[a]["obj"], nodes[b]["obj"]
+            in_path = bool(path) and frozenset((a, b)) in path
+            key = (edge.color, edge.width, edge.line, in_path)
+            line = QLineF(na.x, na.y, nb.x, nb.y)
+            groups.setdefault(key, []).append(line)
+            incident.setdefault(a, []).append((line, True))
+            incident.setdefault(b, []).append((line, False))
+        self._groups = groups
+        self._incident = incident
+
+    def paint(self, painter: QPainter):
+        if self._backend is None:
+            return
+        g = self._backend._g
+        if g.number_of_edges() == 0:
+            return
+        if self._groups is None:
+            self._rebuild()
+
+        dev = painter.device()
+        dw, dh = dev.width(), dev.height()
+        if dw <= 0 or dh <= 0:
+            return
+
+        # малюємо у власний ARGB32-буфер: цільова текстура вузла має
+        # формат RGBA8888, у якому растеризація ліній у ~6 разів
+        # повільніша (див. докстрінг класу)
+        buf = self._buffer
+        if buf is None or buf.width() != dw or buf.height() != dh:
+            buf = QImage(dw, dh, QImage.Format.Format_ARGB32_Premultiplied)
+            self._buffer = buf
+        buf.fill(0)
+
+        p = QPainter(buf)
+        # хінт виставляється явно в обидва боки: швидкі кадри — без AA
+        fast = self._fast and g.number_of_edges() >= self._FAST_EDGES
+        p.setRenderHint(QPainter.RenderHint.Antialiasing, not fast)
+
+        # буфер має роздільність текстури; переводимо логічні координати
+        # кешу в пікселі буфера (identity, коли розміри збігаються)
+        item_w = self.width()
+        if item_w > 0:
+            s = dw / item_w
+            if abs(s - 1.0) > 0.001:
+                p.scale(s, s)
+
+        for (color, width, line, in_path), lines in self._groups.items():
+            if in_path:
+                width += 2
+            pen = QPen(self._highlight if in_path else QColor(color))
+            pen.setWidthF(width)
+            pen.setCapStyle(Qt.PenCapStyle.FlatCap)
+            dash = self._DASHES.get(line)
+            if dash:
+                pen.setDashPattern([dash[0] / width, dash[1] / width])
+            p.setPen(pen)
+            p.drawLines(lines)
+        p.end()
+
+        # один повноекранний перенос: Source копіює пікселі без
+        # змішування, конвертація формату — швидкий SIMD-прохід
+        painter.save()
+        painter.resetTransform()
+        painter.setCompositionMode(
+            QPainter.CompositionMode.CompositionMode_Source)
+        painter.drawImage(0, 0, buf)
+        painter.restore()

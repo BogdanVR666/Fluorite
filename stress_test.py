@@ -1,28 +1,50 @@
-"""Стрес-тест GraphBackend: 1000 вершин зі степенем 1, 10 та 100.
+"""Стрес-тест GraphBackend: 1000 вершин зі степенем 1, 10 та 100,
+плюс раунд перетягування вершини у повних графах K60 і K120.
 
 Граф будується виключно через публічні слоти бекенда (addNode/addEdge),
 тобто тим самим шляхом, яким його викликає QML. Для кожного раунду
 вимірюється час побудови й основних операцій та перевіряється коректність:
 кількість вершин/ребер і те, що кожна вершина має рівно потрібний степінь.
+Кадр ребер вимірюється так само, як його малює застосунок: EdgeLayer.paint
+у QImage (QQuickPaintedItem рендерить у такий само растровий буфер).
 
 Запуск:  uv run python stress_test.py
 """
 
 import math
+import os
 import sys
 import time
 
-import networkx as nx
-from PySide6.QtCore import QCoreApplication
+os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from graphs import GraphBackend
+import networkx as nx
+from PySide6.QtGui import QGuiApplication, QImage, QPainter
+
+from graphs import EdgeLayer, GraphBackend
 
 N_NODES = 1000
 DEGREES = (1, 10, 100)
 SEED = 42
 
+# межа інтерактивності перетягування: 30 кадрів/с
+FRAME_BUDGET_MS = 33.0
 
-def build_round(backend: GraphBackend, degree: int) -> None:
+
+def paint_frame(layer: EdgeLayer) -> float:
+    """Час одного кадру шару ребер, с."""
+    img = QImage(1100, 720, QImage.Format_ARGB32_Premultiplied)
+    img.fill(0)
+    painter = QPainter(img)
+    t0 = time.perf_counter()
+    layer.paint(painter)
+    dt = time.perf_counter() - t0
+    painter.end()
+    return dt
+
+
+def build_round(backend: GraphBackend, layer: EdgeLayer,
+                degree: int) -> None:
     print(f"\n=== Раунд: {N_NODES} вершин, у кожної по {degree} ребер ===")
 
     # --- вершини: розкладаємо по сітці, щоб nodeAt мав що шукати ---
@@ -54,9 +76,8 @@ def build_round(backend: GraphBackend, degree: int) -> None:
     assert not bad, f"вершини зі степенем != {degree}: {bad[:5]}…"
 
     # --- операції, які QML смикає на кожному кадрі/кліку ---
-    t0 = time.perf_counter()
-    edges = backend.edgeList()
-    print(f"edgeList ({len(edges)} ребер): {time.perf_counter() - t0:.3f} c")
+    dt = paint_frame(layer)
+    print(f"кадр EdgeLayer ({n_edges} ребер): {dt * 1000:.1f} мс")
 
     t0 = time.perf_counter()
     hit = backend.nodeAt(60.0, 60.0)
@@ -77,6 +98,42 @@ def build_round(backend: GraphBackend, degree: int) -> None:
     backend.clear()
     print(f"clear: {time.perf_counter() - t0:.3f} c")
     assert g.number_of_nodes() == 0, "clear не спорожнив граф"
+
+
+def drag_round(backend: GraphBackend, layer: EdgeLayer, n: int,
+               budget_ms: float | None) -> None:
+    """Імітує перетягування вершини у повному графі K<n>.
+
+    Кожен "кадр" — це те, що відбувається на рух миші в застосунку:
+    moveNode (оновлення моделі + сигнал) і перемалювання шару ребер.
+    budget_ms — межа мс/кадр (None — лише виміряти й надрукувати).
+    """
+    n_edges = n * (n - 1) // 2
+    print(f"\n=== Раунд: перетягування у K{n} ({n_edges} ребер) ===")
+    cols = math.ceil(math.sqrt(n))
+    for i in range(n):
+        backend.addNode(60.0 + (i % cols) * 90.0,
+                        60.0 + (i // cols) * 90.0,
+                        "Звичайна")
+    t0 = time.perf_counter()
+    backend.connectClassNodes("Звичайна", "Звичайне")
+    print(f"connectClassNodes: {time.perf_counter() - t0:.3f} c")
+    assert backend._g.number_of_edges() == n_edges, "кліка неповна"
+
+    frames = 120
+    img = QImage(1100, 720, QImage.Format_ARGB32_Premultiplied)
+    t0 = time.perf_counter()
+    for i in range(frames):
+        backend.moveNode(1, 60.0 + i, 60.0 + i)
+        painter = QPainter(img)
+        layer.paint(painter)
+        painter.end()
+    ms = (time.perf_counter() - t0) / frames * 1000
+    print(f"кадр перетягування: {ms:.1f} мс ({1000 / ms:.0f} FPS)")
+    if budget_ms is not None:
+        assert ms < budget_ms, \
+            f"кадр {ms:.1f} мс перевищує бюджет {budget_ms} мс"
+    backend.clear()
 
 
 def class_round(backend: GraphBackend) -> None:
@@ -113,12 +170,17 @@ def class_round(backend: GraphBackend) -> None:
 
 
 def main() -> int:
-    app = QCoreApplication(sys.argv)  # noqa: F841 — потрібен для QObject-інфраструктури
+    app = QGuiApplication(sys.argv)  # noqa: F841 — потрібен для QPainter/QImage
     backend = GraphBackend()
+    layer = EdgeLayer()
+    layer.source = backend
 
     total = time.perf_counter()
     for degree in DEGREES:
-        build_round(backend, degree)
+        build_round(backend, layer, degree)
+    # K60 — жорсткий бюджет (мета: "більше ніж K50"); K120 — інформаційно
+    drag_round(backend, layer, 60, FRAME_BUDGET_MS)
+    drag_round(backend, layer, 120, None)
     class_round(backend)
     print(f"\nУсі раунди пройдено за {time.perf_counter() - total:.3f} c ✅")
     return 0

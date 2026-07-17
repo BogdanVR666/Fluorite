@@ -4,12 +4,12 @@
 {
   "version": 2,
   "classes": {                        // класи кожної родини елементів
-    "node": [{"name", "design": {"shape", "color"}}, ...],
+    "node": [{"name", "design": {"shape", "color", "opacity"}}, ...],
     "edge": [{"name", "design": {"color", "width", "line"}}, ...]
   },
-  "nodes": [{"id", "x", "y", "label", "class",
+  "nodes": [{"id", "x", "y", "label", "description", "class",
              "style": {"shape": null | "...", ...}}, ...],
-  "edges": [{"a", "b", "label", "class", "style": {...}}, ...]
+  "edges": [{"a", "b", "label", "description", "class", "style": {...}}, ...]
 }
 
 "style" — перекриття стилю конкретного елемента; null означає
@@ -36,8 +36,8 @@ FORMAT_VERSION = 2
 
 def _element_to_json(obj: BaseElement) -> dict:
     """Спільна для всіх родин частина запису елемента."""
-    return {"label": obj.label, "class": type(obj).type_name,
-            "style": obj.style_overrides()}
+    return {"label": obj.label, "description": obj.description,
+            "class": type(obj).type_name, "style": obj.style_overrides()}
 
 
 def graph_to_json(g: nx.Graph) -> str:
@@ -114,6 +114,7 @@ def graph_from_json(text: str, g: nx.Graph) -> int:
         cls = BaseNode.registry.get(n.get("class"), DefaultNode)
         g.add_node(int(n["id"]),
                    obj=cls(float(n["x"]), float(n["y"]), str(n["label"]),
+                           str(n.get("description", "")),
                            **_style_of(n, cls)))
 
     for e in data.get("edges", []):
@@ -121,6 +122,7 @@ def graph_from_json(text: str, g: nx.Graph) -> int:
         if a in g and b in g and a != b:
             cls = BaseEdge.registry.get(e.get("class"), DefaultEdge)
             g.add_edge(a, b, obj=cls(str(e.get("label", "")),
+                                     str(e.get("description", "")),
                                      **_style_of(e, cls)))
 
     return max(g.nodes, default=0) + 1

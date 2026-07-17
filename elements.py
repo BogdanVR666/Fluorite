@@ -12,7 +12,7 @@ ElementMeta — єдиний метаклас усієї ієрархії еле
 
 StyleAttr    — дескриптор поля стилю: значення екземпляра, а якщо його
                немає (None) — дизайн класу default_<ім'я поля>.
-BaseElement  — спільний предок: лейбл, ініціалізація полів стилю,
+BaseElement  — спільний предок: лейбл і опис, ініціалізація полів стилю,
                серіалізація дизайну (design) і перекриттів
                (style_overrides), створення класів у рантаймі (define).
 """
@@ -71,11 +71,12 @@ class BaseElement(metaclass=ElementMeta):
     abstract = True                 # не потрапляє до реєстру
     type_name = "Base"              # ім'я класу, яке бачить користувач
 
-    def __init__(self, label: str = "", **style):
+    def __init__(self, label: str = "", description: str = "", **style):
         unknown = set(style) - set(self.style_fields)
         if unknown:
             raise TypeError(f"невідомі поля стилю: {sorted(unknown)}")
         self.label = label
+        self.description = description
         for field in self.style_fields:
             setattr(self, "_" + field, style.get(field))
 

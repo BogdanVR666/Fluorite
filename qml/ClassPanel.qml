@@ -5,14 +5,16 @@ import QtQuick.Layouts
 /*
  * Панель класів елементів графа. Суто презентаційний компонент:
  * перемикач родини (вершини/ребра), список зареєстрованих класів
- * обраної родини та форма створення нового класу. Про дії користувача
+ * обраної родини та форма стилю. Форма дворежимна: коли клас обрано —
+ * редагує його дизайн (зміни застосовуються одразу), коли вибір знято
+ * (повторний клік по класу) — створює новий клас. Про дії користувача
  * повідомляє сигналами — що з ними робити, вирішує main.qml.
  */
 Rectangle {
     id: panel
 
     // з backend.classList("node") / classList("edge")
-    property var nodeClasses: []       // [{name, count, shape, color}]
+    property var nodeClasses: []       // [{name, count, shape, color, opacity}]
     property var edgeClasses: []       // [{name, count, color, width, line}]
     property string currentNodeClass: ""   // клас для НОВИХ вершин
     property string currentEdgeClass: ""   // клас для НОВИХ ребер
@@ -24,9 +26,13 @@ Rectangle {
     readonly property string currentClass: nodesShown ? currentNodeClass
                                                       : currentEdgeClass
 
+    // клас обрано — форма редагує його; інакше — створює новий
+    readonly property bool editing: currentClass !== ""
+
     signal classPicked(string family, string name)
     signal connectClassRequested(string name)
     signal createRequested(string family, string name, var design)
+    signal updateRequested(string family, string name, var design)
     signal saveRequested()
     signal openRequested()
     signal clearRequested()
@@ -34,6 +40,40 @@ Rectangle {
     function resetForm() {
         nameField.text = ""
     }
+
+    // заповнює форму дизайном обраного класу
+    function loadDesign() {
+        if (!editing)
+            return
+        for (var i = 0; i < classes.length; i++) {
+            var c = classes[i]
+            if (c.name !== currentClass)
+                continue
+            newColor = String(c.color)
+            if (nodesShown) {
+                newShape = c.shape
+                newOpacity = c.opacity
+            } else {
+                newLine = c.line
+                newWidth = c.width
+            }
+            return
+        }
+    }
+
+    // шле поточний дизайн форми як новий дизайн обраного класу
+    function pushDesign() {
+        if (!editing)
+            return
+        updateRequested(family, currentClass, nodesShown
+            ? { shape: newShape, color: newColor, opacity: newOpacity }
+            : { color: newColor, width: newWidth, line: newLine })
+    }
+
+    onCurrentClassChanged: loadDesign()
+    // список приходить пізніше за вибір (та оновлюється після pushDesign
+    // тими самими значеннями) — перечитуємо без побічних ефектів
+    onClassesChanged: loadDesign()
 
     readonly property var familyDefs: [
         { key: "node", label: "Вершини" },
@@ -69,6 +109,7 @@ Rectangle {
     property string newLine: "solid"
     property real newWidth: 2.5
     property string newColor: Theme.nodePalette[0]
+    property real newOpacity: 1.0
 
     width: 210
     color: Theme.panel
@@ -149,6 +190,7 @@ Rectangle {
                     Text {
                         text: panel.classGlyph(modelData)
                         color: modelData.color
+                        opacity: panel.nodesShown ? modelData.opacity : 1
                         font.pixelSize: panel.nodesShown ? 18 : 14
                         font.bold: !panel.nodesShown && modelData.width >= 4
                     }
@@ -170,8 +212,12 @@ Rectangle {
                     anchors.fill: parent
                     hoverEnabled: true
                     cursorShape: Qt.PointingHandCursor
-                    onClicked: panel.classPicked(panel.family,
-                                                 parent.modelData.name)
+                    // повторний клік по обраному класу знімає вибір —
+                    // форма перемикається у режим створення нового
+                    onClicked: panel.classPicked(
+                        panel.family,
+                        panel.currentClass === parent.modelData.name
+                            ? "" : parent.modelData.name)
                 }
             }
         }
@@ -179,17 +225,26 @@ Rectangle {
         Button {
             text: "З'єднати всі"
             visible: panel.nodesShown
+            enabled: panel.currentNodeClass !== ""
             Layout.fillWidth: true
             onClicked: panel.connectClassRequested(panel.currentNodeClass)
         }
 
         Rectangle { Layout.fillWidth: true; height: 1; color: Theme.border }
 
-        // ---- створення нового класу ----
-        Label { text: "Новий клас"; color: Theme.mutedText; font.pixelSize: 12 }
+        // ---- форма стилю: редагування обраного класу або створення ----
+        Label {
+            text: panel.editing ? "Клас «" + panel.currentClass + "»"
+                                : "Новий клас"
+            color: Theme.mutedText
+            font.pixelSize: 12
+            elide: Text.ElideRight
+            Layout.fillWidth: true
+        }
 
         TextField {
             id: nameField
+            visible: !panel.editing
             Layout.fillWidth: true
             placeholderText: "Назва класу"
         }
@@ -223,8 +278,48 @@ Rectangle {
                         anchors.fill: parent
                         hoverEnabled: true
                         cursorShape: Qt.PointingHandCursor
-                        onClicked: panel.newShape = parent.modelData.key
+                        onClicked: {
+                            panel.newShape = parent.modelData.key
+                            panel.pushDesign()
+                        }
                     }
+                }
+            }
+        }
+
+        // прозорість вершини (лише родина "node")
+        RowLayout {
+            Layout.fillWidth: true
+            visible: panel.nodesShown
+            Label {
+                text: "Прозорість"
+                color: Theme.mutedText
+                font.pixelSize: 12
+                Layout.fillWidth: true
+            }
+            Label {
+                text: Math.round(panel.newOpacity * 100) + "%"
+                color: Theme.mutedText
+                font.pixelSize: 12
+            }
+        }
+        Slider {
+            id: opacitySlider
+            Layout.fillWidth: true
+            visible: panel.nodesShown
+            from: 0.1
+            to: 1.0
+            value: panel.newOpacity
+            onMoved: {
+                panel.newOpacity = value
+                panel.pushDesign()
+            }
+            // взаємодія рве прив'язку value — відновлюємо її вручну,
+            // коли дизайн завантажується з обраного класу
+            Connections {
+                target: panel
+                function onNewOpacityChanged() {
+                    opacitySlider.value = panel.newOpacity
                 }
             }
         }
@@ -258,7 +353,10 @@ Rectangle {
                         anchors.fill: parent
                         hoverEnabled: true
                         cursorShape: Qt.PointingHandCursor
-                        onClicked: panel.newLine = parent.modelData.key
+                        onClicked: {
+                            panel.newLine = parent.modelData.key
+                            panel.pushDesign()
+                        }
                     }
                 }
             }
@@ -294,7 +392,10 @@ Rectangle {
                         anchors.fill: parent
                         hoverEnabled: true
                         cursorShape: Qt.PointingHandCursor
-                        onClicked: panel.newWidth = parent.modelData
+                        onClicked: {
+                            panel.newWidth = parent.modelData
+                            panel.pushDesign()
+                        }
                     }
                 }
             }
@@ -320,7 +421,10 @@ Rectangle {
                         anchors.fill: parent
                         hoverEnabled: true
                         cursorShape: Qt.PointingHandCursor
-                        onClicked: panel.newColor = parent.modelData
+                        onClicked: {
+                            panel.newColor = parent.modelData
+                            panel.pushDesign()
+                        }
                     }
                 }
             }
@@ -328,11 +432,13 @@ Rectangle {
 
         Button {
             text: "Створити клас"
+            visible: !panel.editing
             Layout.fillWidth: true
             enabled: nameField.text.trim() !== ""
             onClicked: {
                 var design = panel.nodesShown
-                    ? { shape: panel.newShape, color: panel.newColor }
+                    ? { shape: panel.newShape, color: panel.newColor,
+                        opacity: panel.newOpacity }
                     : { color: panel.newColor, width: panel.newWidth,
                         line: panel.newLine }
                 panel.createRequested(panel.family, nameField.text.trim(),
@@ -347,8 +453,13 @@ Rectangle {
             wrapMode: Text.WordWrap
             color: Theme.faintText
             font.pixelSize: 11
-            text: panel.nodesShown ? "Нові вершини отримують обраний клас"
-                                   : "Нові ребра отримують обраний клас"
+            text: panel.editing
+                  ? (panel.nodesShown
+                     ? "Нові вершини отримують цей клас; зміни стилю застосовуються до всіх його вершин. Повторний клік по класу — зняти вибір"
+                     : "Нові ребра отримують цей клас; зміни стилю застосовуються до всіх його ребер. Повторний клік по класу — зняти вибір")
+                  : (panel.nodesShown
+                     ? "Клас не обрано: нові вершини — «Звичайна». Форма створює новий клас"
+                     : "Клас не обрано: нові ребра — «Звичайне». Форма створює новий клас")
         }
 
         RowLayout {
