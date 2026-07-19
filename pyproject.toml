@@ -1,10 +1,20 @@
 [project]
-name = "qml-test"
+name = "fluorite"
 version = "0.1.0"
-description = "Add your description here"
+description = "Візуальний редактор графів на PySide6 + NetworkX + QML"
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
     "networkx>=3.6.1",
+    "pydantic>=2.13.4",
     "pyside6>=6.11.1",
 ]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+]
+
+[tool.pytest.ini_options]
+# лише test_*.py: stress_test.py — не pytest, а окремий сценарій
+python_files = ["test_*.py"]

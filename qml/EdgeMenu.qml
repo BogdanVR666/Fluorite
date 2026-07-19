@@ -18,7 +18,9 @@ Popup {
     property real currentWidth: 2.5
     property string currentColor: Theme.nodePalette[0]
     property string currentClass: ""   // клас цього ребра
-    property var classes: []           // [{name, count, color, width, line}]
+    property bool currentDirected: false   // спрямоване (з дизайну класу)
+    property var classes: []           // [{name, count, color, width, line,
+                                       //   directed}]
 
     readonly property var classNames: classes.map(function (c) { return c.name })
 
@@ -26,6 +28,7 @@ Popup {
     signal widthPicked(real width)
     signal colorPicked(string color)
     signal classPicked(string name)
+    signal reverseRequested()
     signal removeRequested()
 
     // ComboBox рве прив'язку currentIndex після вибору користувача,
@@ -176,6 +179,15 @@ Popup {
                 onActivated: function (index) {
                     menu.classPicked(textAt(index))
                 }
+            }
+
+            // Напрям задає клас, а куди саме дивиться стрілка — це вже
+            // дані ребра, тож перемикач живе тут, а не в панелі класів
+            Button {
+                visible: menu.currentDirected
+                text: "⇄ Перевернути напрям"
+                Layout.fillWidth: true
+                onClicked: menu.reverseRequested()
             }
 
             Rectangle { Layout.fillWidth: true; height: 1; color: Theme.popupBorder }

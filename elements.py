@@ -1,114 +1,127 @@
-"""Спільна основа для всіх елементів графа (вершин, ребер, ...).
+"""Спільна основа елементів графа (вершин, ребер, ...) — pydantic-схема.
 
-ElementMeta — єдиний метаклас усієї ієрархії елементів:
-  * веде реєстр родин (ElementMeta.families: "node" → BaseNode, ...);
-  * веде реєстр класів кожної родини (registry в її корені);
-  * обчислює перелік полів стилю класу (style_fields) за StyleAttr.
+Три рівні опису полів (спільні тут, власні — у nodes.py та edges.py):
 
-Родина — гілка ієрархії з власним реєстром і власним набором полів
-стилю. Корінь родини (BaseNode, BaseEdge) — абстрактний клас з
-атрибутом family; всі його неабстрактні нащадки автоматично
-реєструються і стають видимими для UI за своїм type_name.
+  ElementStyle — поля стилю, спільні для всіх родин. Родини успадковують
+                 його (NodeStyle, EdgeStyle) і додають власні поля.
+                 Той самий тип грає дві ролі: як дизайн класу він
+                 заповнений повністю, як style елемента — це перекриття,
+                 де None означає "берётся з дизайну класу".
+  ElementClass — клас елементів як ДАНІ (а не Python-тип): ім'я + дизайн.
+                 Родини успадковують і уточнюють тип дизайну; поля
+                 класу поза стилем (напр. directed у ребер) оголошуються
+                 в extra_design.
+  BaseElement  — спільні поля самих елементів: підпис, опис, посилання
+                 на клас і перекриття стилю.
 
-StyleAttr    — дескриптор поля стилю: значення екземпляра, а якщо його
-               немає (None) — дизайн класу default_<ім'я поля>.
-BaseElement  — спільний предок: лейбл і опис, ініціалізація полів стилю,
-               серіалізація дизайну (design) і перекриттів
-               (style_overrides), створення класів у рантаймі (define).
+Family — реєстр класів однієї родини. Він живе в бекенді (per-документ),
+а не глобально: завантаження файла більше не забруднює класами весь
+процес, класи можна видаляти, а два документи можуть мати різні набори.
+
+styled(поле) — властивість ефективного стилю: значення елемента, а якщо
+воно None — дизайн класу. Заміна колишнього дескриптора StyleAttr.
 """
 
+from typing import ClassVar
 
-class StyleAttr:
-    """Поле стилю: значення екземпляра або, якщо воно None, дизайн класу.
+from pydantic import BaseModel, Field
 
-    default_<ім'я> читається динамічно з класу, тож зміна дизайну класу
-    одразу впливає на всі його елементи без власного перекриття.
+
+class ElementStyle(BaseModel):
+    """Поля стилю, спільні для вершин і ребер. None = дизайн класу."""
+
+    color: str | None = None
+
+
+class ElementClass(BaseModel):
+    """Клас елементів: ім'я + дизайн за замовчуванням для його елементів.
+
+    Це звичайний об'єкт даних. Усі елементи класу тримають посилання
+    на нього, тож зміна дизайну одразу видима елементам без власних
+    перекриттів (styled читає його динамічно).
     """
 
-    def __set_name__(self, owner, name):
-        self.slot = "_" + name
-        self.default = "default_" + name
+    name: str
+    design: ElementStyle = Field(default_factory=ElementStyle)
 
-    def __get__(self, obj, objtype=None):
-        if obj is None:
-            return self
-        value = getattr(obj, self.slot)
-        return getattr(type(obj), self.default) if value is None else value
+    # поля класу поза стилем, які UI і файл бачать як частину дизайну
+    # (наприклад directed у класів ребер)
+    extra_design: ClassVar[tuple[str, ...]] = ()
 
-    def __set__(self, obj, value):
-        setattr(obj, self.slot, value)
+    def design_map(self) -> dict:
+        """Дизайн для UI/файла: поля стилю + extra_design-поля класу."""
+        return {**self.design.model_dump(),
+                **{f: getattr(self, f) for f in self.extra_design}}
 
-
-class ElementMeta(type):
-    """Метаклас елементів графа: реєструє родини і класи в них."""
-
-    families: dict[str, "ElementMeta"] = {}   # family → корінь родини
-
-    def __new__(mcls, name, bases, namespace):
-        cls = super().__new__(mcls, name, bases, namespace)
-        # усі поля стилю класу — StyleAttr-и по всьому MRO
-        fields: list[str] = []
-        for klass in reversed(cls.__mro__):
-            for attr, value in vars(klass).items():
-                if isinstance(value, StyleAttr) and attr not in fields:
-                    fields.append(attr)
-        cls.style_fields = tuple(fields)
-
-        # abstract шукаємо лише у власному namespace, щоб нащадки
-        # не успадковували "абстрактність" від предків
-        if namespace.get("abstract", False):
-            cls.registry = {}                 # новий корінь родини
-            if "family" in namespace:
-                mcls.families[namespace["family"]] = cls
-        else:
-            cls.registry[cls.type_name] = cls
-        return cls
+    def apply_design(self, values: dict) -> None:
+        """Накладає значення дизайну; невідомі ключі мовчки пропускає."""
+        for field, value in values.items():
+            if field in self.extra_design:
+                setattr(self, field, value)
+            elif field in type(self.design).model_fields:
+                setattr(self.design, field, value)
 
 
-class BaseElement(metaclass=ElementMeta):
-    """Елемент графа. Дизайн за замовчуванням визначає клас."""
+class BaseElement(BaseModel):
+    """Елемент графа: підпис, опис, клас і перекриття стилю."""
 
-    abstract = True                 # не потрапляє до реєстру
-    type_name = "Base"              # ім'я класу, яке бачить користувач
+    label: str = ""
+    description: str = ""
+    klass: ElementClass
+    style: ElementStyle = Field(default_factory=ElementStyle)
 
-    def __init__(self, label: str = "", description: str = "", **style):
-        unknown = set(style) - set(self.style_fields)
-        if unknown:
-            raise TypeError(f"невідомі поля стилю: {sorted(unknown)}")
-        self.label = label
-        self.description = description
-        for field in self.style_fields:
-            setattr(self, "_" + field, style.get(field))
 
-    # --- серіалізація стилю ---
+def styled(field: str) -> property:
+    """Властивість ефективного стилю елемента.
 
-    def style_overrides(self) -> dict:
-        """Перекриття стилю екземпляра; None — діє дизайн класу."""
-        return {f: getattr(self, "_" + f) for f in self.style_fields}
+    Читання: власне перекриття, а якщо воно None — дизайн класу
+    (динамічно, тож зміна дизайну класу видима одразу).
+    Запис: у перекриття елемента.
+    """
+    def get(self):
+        value = getattr(self.style, field)
+        return getattr(self.klass.design, field) if value is None else value
 
-    @classmethod
-    def design(cls) -> dict:
-        """Дизайн класу: поле стилю → значення за замовчуванням."""
-        return {f: getattr(cls, "default_" + f) for f in cls.style_fields}
+    def set(self, value):
+        setattr(self.style, field, value)
 
-    # --- створення класів під час виконання ---
+    return property(get, set)
 
-    @classmethod
-    def define(cls, name: str, **design) -> "ElementMeta | None":
-        """Створює й реєструє новий клас родини; None — ім'я вже зайняте.
 
-        Виклик метакласа еквівалентний оголошенню
-            class <name>(cls):
-                type_name = name
-                default_<поле> = <значення>   # для кожного поля design
+class Family:
+    """Реєстр класів однієї родини елементів (вершин або ребер).
+
+    Належить документові (бекенду), а не процесові. Клас "за
+    замовчуванням" створюється одразу і не видаляється — на нього
+    спираються елементи без явного класу.
+    """
+
+    def __init__(self, class_type: type[ElementClass],
+                 style_type: type[ElementStyle], default_name: str):
+        self.class_type = class_type
+        self.style_type = style_type
+        self.classes: dict[str, ElementClass] = {}
+        self.default = self.define(default_name)
+
+    @property
+    def design_fields(self) -> tuple[str, ...]:
+        """Усі поля дизайну родини: стиль + extra_design класу."""
+        return (tuple(self.style_type.model_fields)
+                + self.class_type.extra_design)
+
+    def get(self, name: str | None) -> ElementClass | None:
+        return self.classes.get(name)
+
+    def define(self, name: str, **design) -> ElementClass | None:
+        """Створює й реєструє клас родини; None — ім'я порожнє чи зайняте.
+
+        Незадані поля дизайну отримують значення за замовчуванням
+        родини (дефолти design у class_type).
         """
-        unknown = set(design) - set(cls.style_fields)
-        if unknown:
-            raise TypeError(f"невідомі поля стилю: {sorted(unknown)}")
         name = name.strip()
-        if not name or name in cls.registry:
+        if not name or name in self.classes:
             return None
-        return type(cls)(name, (cls,), {
-            "type_name": name,
-            **{"default_" + f: v for f, v in design.items()},
-        })
+        cls = self.class_type(name=name)
+        cls.apply_design(design)
+        self.classes[name] = cls
+        return cls

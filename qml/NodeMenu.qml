@@ -20,6 +20,23 @@ Popup {
     property string currentClass: ""   // клас цієї вершини
     property var classes: []           // [{name, shape, color, opacity, count}]
 
+    // Скільки вершин зачепить дія. Стиль, клас і видалення застосовуються
+    // до всього виділення, а от текст і опис — лише до targetId, бо для
+    // групи вони не мають сенсу; тому при >1 ці поля ховаємо.
+    property int selectionCount: 1
+    readonly property bool group: selectionCount > 1
+
+    // група вершин, якій належить targetId (-1 — нікому): розгорнуту
+    // групу згортають назад через меню будь-якого її члена
+    property int groupId: -1
+    property string groupLabel: ""
+
+    // сама вершина — метавершина групи (видима, отже група згорнута):
+    // форма в неї незмінна, зате можна розгорнути чи розпустити групу
+    property bool isGroup: false
+    property int ownGroupId: -1
+    property int memberCount: 0
+
     readonly property var classNames: classes.map(function (c) { return c.name })
 
     signal labelEdited(string text)
@@ -29,6 +46,11 @@ Popup {
     signal opacityPicked(real opacity)
     signal classPicked(string name)
     signal connectToClassRequested(string name)
+    signal connectSelectedRequested()
+    signal groupSelectedRequested()
+    signal collapseGroupRequested()
+    signal expandGroupRequested()
+    signal ungroupRequested()
     signal removeRequested()
 
     // TextArea не розрізняє редагування користувача і програмний запис,
@@ -81,24 +103,50 @@ Popup {
             spacing: 10
 
             Label {
-                text: "Вершина " + menu.targetLabel
+                text: menu.group ? "Виділено вершин: " + menu.selectionCount
+                    : menu.isGroup ? "Група " + menu.targetLabel
+                                     + " (" + menu.memberCount + ")"
+                                   : "Вершина " + menu.targetLabel
                 color: Theme.foreground
                 font.bold: true
                 font.pixelSize: 14
             }
 
-            Label { text: "Текст"; color: Theme.mutedText; font.pixelSize: 12 }
+            // дії метавершини: розгорнути групу назад чи розпустити її
+            Button {
+                visible: menu.isGroup && !menu.group
+                text: "📂 Розгорнути групу"
+                Layout.fillWidth: true
+                onClicked: menu.expandGroupRequested()
+            }
+
+            Button {
+                visible: menu.isGroup && !menu.group
+                text: "✂ Розгрупувати"
+                Layout.fillWidth: true
+                onClicked: menu.ungroupRequested()
+            }
+
+            Label {
+                visible: !menu.group
+                text: "Текст"; color: Theme.mutedText; font.pixelSize: 12
+            }
 
             TextField {
                 id: labelField
+                visible: !menu.group
                 Layout.fillWidth: true
                 placeholderText: "Підпис вершини"
                 onTextEdited: menu.labelEdited(text)
             }
 
-            Label { text: "Опис"; color: Theme.mutedText; font.pixelSize: 12 }
+            Label {
+                visible: !menu.group
+                text: "Опис"; color: Theme.mutedText; font.pixelSize: 12
+            }
 
             ScrollView {
+                visible: !menu.group
                 Layout.fillWidth: true
                 Layout.preferredHeight: 56
                 clip: true
@@ -115,9 +163,14 @@ Popup {
                 }
             }
 
-            Label { text: "Форма"; color: Theme.mutedText; font.pixelSize: 12 }
+            Label {
+                // форма метавершини незмінна — "стопка" квадратів
+                visible: !menu.isGroup
+                text: "Форма"; color: Theme.mutedText; font.pixelSize: 12
+            }
 
             GridLayout {
+                visible: !menu.isGroup
                 columns: 4
                 columnSpacing: 6
                 Repeater {
@@ -225,10 +278,32 @@ Popup {
                 }
             }
 
+            Button {
+                visible: menu.group
+                text: "🔗 З'єднати виділені між собою"
+                Layout.fillWidth: true
+                onClicked: menu.connectSelectedRequested()
+            }
+
+            Button {
+                visible: menu.group
+                text: "🗂 Згорнути виділені у групу"
+                Layout.fillWidth: true
+                onClicked: menu.groupSelectedRequested()
+            }
+
+            Button {
+                visible: menu.groupId !== -1
+                text: "🗂 Згорнути групу «" + menu.groupLabel + "»"
+                Layout.fillWidth: true
+                onClicked: menu.collapseGroupRequested()
+            }
+
             Rectangle { Layout.fillWidth: true; height: 1; color: Theme.popupBorder }
 
             Button {
-                text: "🗑 Видалити вершину"
+                text: menu.group ? "🗑 Видалити виділені (" + menu.selectionCount + ")"
+                                 : "🗑 Видалити вершину"
                 Layout.fillWidth: true
                 palette.buttonText: Theme.error
                 onClicked: menu.removeRequested()

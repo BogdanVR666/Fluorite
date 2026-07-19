@@ -1,34 +1,59 @@
-"""Класи ребер графа — родина "edge" (спільна механіка в elements.py).
+"""Родина ребер: поля, що є ВИКЛЮЧНО у ребер (спільні — в elements.py).
 
-BaseEdge    — корінь родини: поля стилю лінії (колір, товщина, штрих).
-              Координати ребру дають вершини-кінці, тож власної
-              геометрії воно не зберігає.
-DefaultEdge — клас "за замовчуванням" для ребер без явного класу.
+EdgeStyle — стиль лінії: успадковує спільний color, додає товщину
+            і штрих. Координати ребру дають вершини-кінці, тож власної
+            геометрії воно не має.
+EdgeClass — клас ребер: дизайн EdgeStyle плюс directed. Напрямленість —
+            властивість КЛАСУ, а не стиль окремого ребра: "читає" або
+            спрямоване, або ні. Для UI і файла воно входить у дизайн
+            через extra_design.
+Edge      — саме ребро: лише спільні поля елемента. Кінці й напрям
+            зберігає шар-граф свого класу (див. layers.py): у
+            напрямленому шарі (nx.DiGraph) орієнтація пари (u, v) —
+            це і є напрям стрілки, тож ребру не треба пам'ятати
+            власного "джерела".
 
-Нові класи ребер створюються під час виконання викликом
-BaseEdge.define(ім'я, color=..., width=..., line=...).
+Нові класи ребер створюються через Family(EdgeClass, EdgeStyle, ...)
+у сховищі — див. elements.py, layers.py.
 """
 
-from elements import BaseElement, StyleAttr
+from typing import ClassVar
+
+from pydantic import Field
+
+from elements import BaseElement, ElementClass, ElementStyle, styled
 
 
-class BaseEdge(BaseElement):
-    """Ребро графа: стиль лінії, якою воно малюється."""
+class EdgeStyle(ElementStyle):
+    """Поля стилю, які має лише ребро."""
 
-    abstract = True                 # корінь родини, не потрапляє до реєстру
-    family = "edge"
-    type_name = "Base"
-
-    color = StyleAttr()
-    width = StyleAttr()
-    line = StyleAttr()              # "solid" | "dash" | "dot"
-
-    default_color = "#7f8fd9"       # збігається з Theme.edge типової теми
-    default_width = 2.5
-    default_line = "solid"
+    width: float | None = None
+    line: str | None = None         # "solid" | "dash" | "dot"
 
 
-class DefaultEdge(BaseEdge):
-    """Ребра, для яких клас не обрано."""
+class EdgeClass(ElementClass):
+    """Клас ребер: повністю заповнений дизайн + напрямленість."""
 
-    type_name = "Звичайне"
+    design: EdgeStyle = Field(default_factory=lambda: EdgeStyle(
+        color="#7f8fd9", width=2.5, line="solid"))
+    directed: bool = False          # чи малювати стрілку в бік цілі
+
+    extra_design: ClassVar[tuple[str, ...]] = ("directed",)
+
+
+class Edge(BaseElement):
+    """Ребро графа: стиль лінії, яким воно малюється."""
+
+    klass: EdgeClass
+    style: EdgeStyle = Field(default_factory=EdgeStyle)
+
+    color = styled("color")
+    width = styled("width")
+    line = styled("line")
+
+    @property
+    def directed(self) -> bool:
+        return self.klass.directed
+
+
+DEFAULT_EDGE_CLASS = "Звичайне"     # клас ребер, для яких клас не обрано

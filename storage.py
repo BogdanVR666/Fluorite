@@ -1,59 +1,77 @@
-"""Серіалізація графа у JSON і назад.
+"""Серіалізація сховища (LayeredGraph) у JSON і назад.
 
-Формат файла (version 2):
+Це "інша структура", що займається файлами: саме сховище (layers.py)
+про них не знає нічого.
+
+Формат файла (version 6):
 {
-  "version": 2,
+  "version": 6,
   "classes": {                        // класи кожної родини елементів
     "node": [{"name", "design": {"shape", "color", "opacity"}}, ...],
-    "edge": [{"name", "design": {"color", "width", "line"}}, ...]
+    "edge": [{"name", "design": {"color", "width", "line", "directed"}}, ...]
   },
   "nodes": [{"id", "x", "y", "label", "description", "class",
              "style": {"shape": null | "...", ...}}, ...],
-  "edges": [{"a", "b", "label", "description", "class", "style": {...}}, ...]
+  "edges": [{"a", "b", "label", "description", "class", "style": {...}}, ...],
+  "groups": [{"id", "node", "collapsed", "members": [id, ...]}, ...]
 }
 
 "style" — перекриття стилю конкретного елемента; null означає
 "використовується дизайн класу". Набір полів дизайну і перекриттів
-не прописаний тут жорстко — він береться зі style_fields родини,
-тож нові поля стилю підхоплюються автоматично.
+не прописаний тут жорстко — він береться зі схем родини, тож нові
+поля підхоплюються автоматично. "directed" — поле класу ребер
+(extra_design), у файлі воно лежить у "design" класу.
 
-Зберігаються всі зареєстровані класи, навіть порожні, — щоб визначені
-користувачем класи не губилися між сеансами. Файли version 1
-(лише класи вершин, ребра без атрибутів) читаються й підіймаються
-до формату version 2.
+Напрям ребра напрямленого класу кодує сам порядок кінців: a — джерело,
+b — ціль. Окремого поля "source" version 4 не має; ребра різних класів
+на одній парі вершин — звичайна річ.
+
+"groups" — групи вершин: "node" — id метавершини групи (вона лежить
+серед "nodes" як звичайна вершина: підпис, стиль і ребра — її),
+members — id вершин-членів (можуть бути метавершинами інших груп),
+collapsed — чи група згорнута. У version 5 метавершини ще не було —
+група мала власні label/x/y; при читанні їй довиділяється вершина.
+Файли без "groups" (version 4 і старіші) читаються як граф без груп.
+
+Зберігаються всі класи сховища, навіть порожні, — щоб визначені
+користувачем класи не губилися між сеансами. Старіші файли читаються:
+version 1 підіймається до version 2; у version 2 напрям беруть з
+порядку кінців; version 3 мав поле "source" — за ним ребро
+орієнтується при завантаженні.
 """
 
 import json
 
-import networkx as nx
+from edges import Edge
+from elements import BaseElement
+from layers import LayeredGraph, NodeGroup
+from nodes import Node
 
-from edges import BaseEdge, DefaultEdge
-from elements import BaseElement, ElementMeta
-from nodes import BaseNode, DefaultNode
-
-FORMAT_VERSION = 2
+FORMAT_VERSION = 6
 
 
 def _element_to_json(obj: BaseElement) -> dict:
     """Спільна для всіх родин частина запису елемента."""
     return {"label": obj.label, "description": obj.description,
-            "class": type(obj).type_name, "style": obj.style_overrides()}
+            "class": obj.klass.name, "style": obj.style.model_dump()}
 
 
-def graph_to_json(g: nx.Graph) -> str:
+def graph_to_json(store: LayeredGraph) -> str:
     nodes = []
-    for nid, data in g.nodes(data=True):
-        obj: BaseNode = data["obj"]
+    for nid, obj in store.nodes.items():
         nodes.append({"id": nid, "x": obj.x, "y": obj.y,
                       **_element_to_json(obj)})
     return json.dumps({
         "version": FORMAT_VERSION,
-        "classes": {family: [{"name": cls.type_name, "design": cls.design()}
-                             for cls in root.registry.values()]
-                    for family, root in ElementMeta.families.items()},
+        "classes": {family: [{"name": cls.name, "design": cls.design_map()}
+                             for cls in fam.classes.values()]
+                    for family, fam in store.families.items()},
         "nodes": nodes,
-        "edges": [{"a": a, "b": b, **_element_to_json(data["obj"])}
-                  for a, b, data in g.edges(data=True)],
+        "edges": [{"a": a, "b": b, **_element_to_json(obj)}
+                  for _, a, b, obj in store.edges()],
+        "groups": [{"id": gid, "node": g.node, "collapsed": g.collapsed,
+                    "members": sorted(g.members)}
+                   for gid, g in store.groups.items()],
     }, ensure_ascii=False, indent=2)
 
 
@@ -71,58 +89,81 @@ def _upgrade_v1(data: dict) -> dict:
     return data
 
 
-def _restore_classes(families_json: dict):
-    """Реєструє класи з файла; наявним оновлює дизайн — файл є джерелом
-    істини, тож граф виглядатиме так само, як при збереженні."""
+def _restore_classes(families_json: dict, store: LayeredGraph):
+    """Реєструє класи з файла; наявним (дефолтним) оновлює дизайн — файл
+    є джерелом істини, тож граф виглядатиме так само, як при збереженні."""
     for family, entries in families_json.items():
-        root = ElementMeta.families.get(family)
-        if root is None:
+        fam = store.families.get(family)
+        if fam is None:
             continue
         for entry in entries:
-            design = {f: v for f, v in entry.get("design", {}).items()
-                      if f in root.style_fields}
-            cls = root.registry.get(entry["name"])
+            design = entry.get("design", {})
+            cls = fam.get(entry["name"])
             if cls is None:
-                root.define(entry["name"], **design)
+                fam.define(entry["name"], **design)
             else:
-                for field, value in design.items():
-                    setattr(cls, "default_" + field, value)
+                cls.apply_design(design)
 
 
-def _style_of(entry: dict, cls: type) -> dict:
+def _style_of(entry: dict, style_type: type) -> dict:
     """Перекриття стилю елемента з запису файла (лише відомі поля)."""
     return {f: v for f, v in (entry.get("style") or {}).items()
-            if f in cls.style_fields}
+            if f in style_type.model_fields}
 
 
-def graph_from_json(text: str, g: nx.Graph) -> int:
-    """Заповнює порожній g даними з JSON; повертає next_id.
+def graph_from_json(text: str) -> LayeredGraph:
+    """Будує нове сховище з JSON.
 
-    Кидає ValueError, якщо формат не розпізнано.
+    Кидає ValueError, якщо формат не розпізнано. Сховище свіже —
+    жодного глобального стану, класи інших документів не перетікають.
     """
     data = json.loads(text)
     if not isinstance(data, dict) or "nodes" not in data:
         raise ValueError("це не файл графа")
-    if data.get("version", 1) > FORMAT_VERSION:
+    version = data.get("version", 1)
+    if version > FORMAT_VERSION:
         raise ValueError("файл створено новішою версією програми")
-    if data.get("version", 1) < 2:
+    if version < 2:
         data = _upgrade_v1(data)
 
-    _restore_classes(data.get("classes", {}))
+    store = LayeredGraph()
+    _restore_classes(data.get("classes", {}), store)
+    node_fam, edge_fam = store.families["node"], store.families["edge"]
 
     for n in data["nodes"]:
-        cls = BaseNode.registry.get(n.get("class"), DefaultNode)
-        g.add_node(int(n["id"]),
-                   obj=cls(float(n["x"]), float(n["y"]), str(n["label"]),
-                           str(n.get("description", "")),
-                           **_style_of(n, cls)))
+        cls = node_fam.get(n.get("class")) or node_fam.default
+        store.insert_node(
+            int(n["id"]),
+            Node(klass=cls, x=float(n["x"]), y=float(n["y"]),
+                 label=str(n["label"]),
+                 description=str(n.get("description", "")),
+                 style=node_fam.style_type(**_style_of(n, node_fam.style_type))))
 
+    style_type = edge_fam.style_type
     for e in data.get("edges", []):
         a, b = e["a"], e["b"]
-        if a in g and b in g and a != b:
-            cls = BaseEdge.registry.get(e.get("class"), DefaultEdge)
-            g.add_edge(a, b, obj=cls(str(e.get("label", "")),
-                                     str(e.get("description", "")),
-                                     **_style_of(e, cls)))
+        # у version 3 напрям задавало поле "source"; відтоді — порядок кінців
+        if version == 3 and e.get("source") == b:
+            a, b = b, a
+        cls = edge_fam.get(e.get("class")) or edge_fam.default
+        store.insert_edge(
+            cls.name, a, b,
+            Edge(klass=cls, label=str(e.get("label", "")),
+                 description=str(e.get("description", "")),
+                 style=style_type(**_style_of(e, style_type))))
 
-    return max(g.nodes, default=0) + 1
+    for g in data.get("groups", []):
+        nid = g.get("node")
+        if nid is None:
+            # version 5: група ще не мала метавершини — довиділяємо
+            nid = store.next_id
+            store.insert_node(nid, Node(
+                klass=node_fam.default,
+                x=float(g.get("x", 0.0)), y=float(g.get("y", 0.0)),
+                label=str(g.get("label", "")) or f"Група {g['id']}"))
+        store.insert_group(int(g["id"]), NodeGroup(
+            node=int(nid),
+            collapsed=bool(g.get("collapsed", False)),
+            members={int(m) for m in g.get("members", [])}))
+
+    return store

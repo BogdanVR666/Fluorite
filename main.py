@@ -23,9 +23,7 @@ def main() -> int:
     if not engine.rootObjects():
         return 1
 
-    rc = app.exec()
-    engine.deleteLater()
-    return rc
+    return app.exec()
 
 
 if __name__ == "__main__":

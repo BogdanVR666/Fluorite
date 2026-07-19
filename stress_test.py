@@ -69,10 +69,10 @@ def build_round(backend: GraphBackend, layer: EdgeLayer,
           f"({n_edges / t_edges:.0f} ребер/с)")
 
     # --- перевірка коректності ---
-    g = backend._g
-    assert g.number_of_nodes() == N_NODES, "невірна кількість вершин"
-    assert g.number_of_edges() == n_edges, "невірна кількість ребер"
-    bad = [nid for nid in g.nodes if g.degree[nid] != degree]
+    store = backend._store
+    assert len(store.nodes) == N_NODES, "невірна кількість вершин"
+    assert store.edge_count() == n_edges, "невірна кількість ребер"
+    bad = [nid for nid in store.nodes if store.degree(nid) != degree]
     assert not bad, f"вершини зі степенем != {degree}: {bad[:5]}…"
 
     # --- операції, які QML смикає на кожному кадрі/кліку ---
@@ -87,8 +87,9 @@ def build_round(backend: GraphBackend, layer: EdgeLayer,
     assert hit == 1 and miss == -1, "nodeAt повернув неочікуване"
 
     t0 = time.perf_counter()
-    msg = backend.findShortestPath(1, N_NODES)
-    print(f"findShortestPath(1, {N_NODES}): {time.perf_counter() - t0:.3f} c — {msg}")
+    hits = backend.selectInRect(0.0, 0.0, 400.0, 400.0, False)
+    print(f"selectInRect (виділено={hits}): {time.perf_counter() - t0:.3f} c")
+    backend.clearSelection()
 
     t0 = time.perf_counter()
     stats = backend.stats
@@ -97,7 +98,7 @@ def build_round(backend: GraphBackend, layer: EdgeLayer,
     t0 = time.perf_counter()
     backend.clear()
     print(f"clear: {time.perf_counter() - t0:.3f} c")
-    assert g.number_of_nodes() == 0, "clear не спорожнив граф"
+    assert len(store.nodes) == 0, "clear не спорожнив граф"
 
 
 def drag_round(backend: GraphBackend, layer: EdgeLayer, n: int,
@@ -118,7 +119,7 @@ def drag_round(backend: GraphBackend, layer: EdgeLayer, n: int,
     t0 = time.perf_counter()
     backend.connectClassNodes("Звичайна", "Звичайне")
     print(f"connectClassNodes: {time.perf_counter() - t0:.3f} c")
-    assert backend._g.number_of_edges() == n_edges, "кліка неповна"
+    assert backend._store.edge_count() == n_edges, "кліка неповна"
 
     frames = 120
     img = QImage(1100, 720, QImage.Format_ARGB32_Premultiplied)
@@ -157,14 +158,17 @@ def class_round(backend: GraphBackend) -> None:
     t_clique = time.perf_counter() - t0
     want = N_NODES * (N_NODES - 1) // 2
     print(f"connectClassNodes: {t_clique:.3f} c — {msg}")
-    assert backend._g.number_of_edges() == want, "кліка неповна"
+    assert backend._store.edge_count() == want, "кліка неповна"
     strong = next(c for c in backend.classList("edge") if c["name"] == "Міцне")
     assert strong["count"] == want, "ребра кліки мали отримати клас «Міцне»"
 
+    # вершина → клас іде тим самим шляхом, що й у QML: через виділення
+    backend.selectNode(hub, False)
     t0 = time.perf_counter()
-    msg = backend.connectNodeToClass(hub, "Звичайна", "Звичайне")
-    print(f"connectNodeToClass: {time.perf_counter() - t0:.3f} c — {msg}")
-    assert backend._g.degree[hub] == N_NODES, "хаб з'єднано не з усіма"
+    msg = backend.connectSelectionToClass("Звичайна", "Звичайне")
+    print(f"connectSelectionToClass: {time.perf_counter() - t0:.3f} c — {msg}")
+    assert backend._store.degree(hub) == N_NODES, "хаб з'єднано не з усіма"
+    backend.clearSelection()
 
     backend.clear()
 

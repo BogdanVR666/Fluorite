@@ -15,7 +15,8 @@ Rectangle {
 
     // з backend.classList("node") / classList("edge")
     property var nodeClasses: []       // [{name, count, shape, color, opacity}]
-    property var edgeClasses: []       // [{name, count, color, width, line}]
+    property var edgeClasses: []       // [{name, count, color, width, line,
+                                       //   directed}]
     property string currentNodeClass: ""   // клас для НОВИХ вершин
     property string currentEdgeClass: ""   // клас для НОВИХ ребер
 
@@ -56,6 +57,7 @@ Rectangle {
             } else {
                 newLine = c.line
                 newWidth = c.width
+                newDirected = c.directed === true
             }
             return
         }
@@ -67,7 +69,8 @@ Rectangle {
             return
         updateRequested(family, currentClass, nodesShown
             ? { shape: newShape, color: newColor, opacity: newOpacity }
-            : { color: newColor, width: newWidth, line: newLine })
+            : { color: newColor, width: newWidth, line: newLine,
+                directed: newDirected })
     }
 
     onCurrentClassChanged: loadDesign()
@@ -91,6 +94,10 @@ Rectangle {
         { key: "dot",   glyph: "┈┈" }
     ]
     readonly property var widthDefs: [2.5, 4, 6]
+    readonly property var dirDefs: [
+        { key: false, glyph: "──" },
+        { key: true,  glyph: "──▶" }
+    ]
 
     function glyphIn(defs, key) {
         for (var i = 0; i < defs.length; i++)
@@ -99,9 +106,11 @@ Rectangle {
         return defs[0].glyph
     }
     // значок класу в списку: форма вершини або лінія ребра
+    // (спрямованому ребру дописуємо вістря)
     function classGlyph(cls) {
         return nodesShown ? glyphIn(shapeDefs, cls.shape)
                           : glyphIn(lineDefs, cls.line)
+                            + (cls.directed === true ? "▶" : "")
     }
 
     // дизайн майбутнього класу
@@ -110,9 +119,18 @@ Rectangle {
     property real newWidth: 2.5
     property string newColor: Theme.nodePalette[0]
     property real newOpacity: 1.0
+    property bool newDirected: false
 
     width: 210
     color: Theme.panel
+
+    // Клік по порожньому тлу панелі знімає вибір класу — так само, як
+    // повторний клік по обраному рядку. Оголошена першою, тож лежить під
+    // усім вмістом і дістає лише ті кліки, які ніхто інший не забрав.
+    MouseArea {
+        anchors.fill: parent
+        onClicked: panel.classPicked(panel.family, "")
+    }
 
     ColumnLayout {
         anchors.fill: parent
@@ -170,6 +188,15 @@ Rectangle {
             clip: true
             spacing: 4
             model: panel.classes
+
+            // Порожнє місце під рядками належить ListView, а Flickable
+            // забирає прес собі й не пропускає його до тла панелі —
+            // звичайна MouseArea тут не спрацює. TapHandler живе на самому
+            // Flickable, не заважає прокрутці й не бачить кліків по рядках:
+            // їхні MouseArea перехоплюють захоплення першими.
+            TapHandler {
+                onTapped: panel.classPicked(panel.family, "")
+            }
 
             delegate: Rectangle {
                 required property var modelData
@@ -401,6 +428,45 @@ Rectangle {
             }
         }
 
+        // напрям ребра (лише родина "edge"): ребра спрямованого класу
+        // малюються зі стрілкою в бік цілі
+        GridLayout {
+            columns: 2
+            columnSpacing: 6
+            visible: !panel.nodesShown
+            Repeater {
+                model: panel.dirDefs
+                delegate: Rectangle {
+                    required property var modelData
+                    width: 52; height: 34; radius: 8
+                    color: panel.newDirected === modelData.key
+                           ? Theme.accent
+                           : dirHover.containsMouse ? Theme.hover
+                                                    : Theme.control
+                    border.width: panel.newDirected === modelData.key ? 0 : 1
+                    border.color: Theme.border
+                    Behavior on color { ColorAnimation { duration: 100 } }
+
+                    Text {
+                        anchors.centerIn: parent
+                        text: parent.modelData.glyph
+                        color: Theme.foreground
+                        font.pixelSize: 14
+                    }
+                    MouseArea {
+                        id: dirHover
+                        anchors.fill: parent
+                        hoverEnabled: true
+                        cursorShape: Qt.PointingHandCursor
+                        onClicked: {
+                            panel.newDirected = parent.modelData.key
+                            panel.pushDesign()
+                        }
+                    }
+                }
+            }
+        }
+
         GridLayout {
             columns: 4
             columnSpacing: 6
@@ -440,7 +506,7 @@ Rectangle {
                     ? { shape: panel.newShape, color: panel.newColor,
                         opacity: panel.newOpacity }
                     : { color: panel.newColor, width: panel.newWidth,
-                        line: panel.newLine }
+                        line: panel.newLine, directed: panel.newDirected }
                 panel.createRequested(panel.family, nameField.text.trim(),
                                       design)
             }
