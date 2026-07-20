@@ -1,5 +1,3 @@
-"""Точка входу застосунку: створює QGuiApplication, бекенд і QML-рушій."""
-
 import sys
 from pathlib import Path
 

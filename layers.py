@@ -1,42 +1,3 @@
-"""Сховище графа: класи елементів + пул вершин + шар на клас ребер.
-
-LayeredGraph — багатошаровий (multiplex) граф, стан у пам'яті:
-  * families — реєстри класів вершин і ребер (Family з elements.py);
-  * nodes    — пул вершин, dict id → Node; вершини існують незалежно
-               від шарів;
-  * layers   — окремий граф на КОЖЕН клас ребер: nx.DiGraph, якщо клас
-               напрямлений, інакше nx.Graph. Налаштування класу ребер
-               визначає тип його шару; зміна directed конвертує шар.
-               У напрямленому шарі орієнтація пари (u, v) — це напрям
-               стрілки, окремого поля "джерело" ребро не має.
-
-Інваріанти:
-  * вершина присутня в шарі тоді й лише тоді, коли має там ребра —
-    мутації самі прибирають ізольовані вершини з шарів;
-  * на пару вершин у межах одного класу — щонайбільше одне ребро
-    (у напрямленому шарі — в будь-який бік); ребра РІЗНИХ класів на
-    одній парі вершин співіснують вільно;
-  * node_ids (клас вершин → множина id) підтримується інкрементно;
-    аналог для ребер не потрібен — кількість ребер класу і є
-    number_of_edges() його шару.
-
-Ідентичність ребра — (клас, a, b); порядок (a, b) у напрямленому шарі
-не важливий для пошуку (find_edge/orientation дивляться в обидва боки),
-але важливий для стрілки.
-
-Групи вершин (NodeGroup) — теж стан сховища. Метавершина групи —
-ПОВНОЦІННА вершина пулу (Node): має підпис, колір, власні ребра і може
-сама бути членом іншої групи (вкладеність). Згорнута група показує
-лише метавершину, розгорнута — лише членів (метавершина і її ребра
-не видні). Згортання — стан ВІДОБРАЖЕННЯ: граф не мутується, лише
-малюється інакше: visual_owner каже, хто кого представляє на полі.
-Вершина належить щонайбільше одній групі; група з < 2 членами
-розчиняється, а її метавершина стає в чергу orphans на прибирання.
-
-Файли — не справа цієї структури: серіалізацією займається storage.py.
-Qt тут теж немає — сховище живе й тестується без GUI.
-"""
-
 import networkx as nx
 from pydantic import BaseModel, Field
 
@@ -46,26 +7,17 @@ from nodes import DEFAULT_NODE_CLASS, Node, NodeClass, NodeStyle
 
 
 class NodeGroup(BaseModel):
-    """Група вершин: власна метавершина (node) + члени.
-
-    Позицію, підпис і стиль групи тримає її метавершина — звичайна
-    вершина пулу; тут лише зв'язок і стан згорнутості.
-    """
-
-    node: int                      # id метавершини групи в пулі
+    node: int
     members: set[int] = Field(default_factory=set)
     collapsed: bool = False
 
 
 def make_families() -> dict[str, Family]:
-    """Свіжі реєстри класів обох родин з дефолтними класами."""
     return {"node": Family(NodeClass, NodeStyle, DEFAULT_NODE_CLASS),
             "edge": Family(EdgeClass, EdgeStyle, DEFAULT_EDGE_CLASS)}
 
 
 class LayeredGraph:
-    """Класи, вершини і шари-графи одного відкритого графа."""
-
     def __init__(self):
         self.families = make_families()
         self.nodes: dict[int, Node] = {}
@@ -78,7 +30,6 @@ class LayeredGraph:
         self.next_group_id = 1
         self.orphans: list[int] = []   # метавершини розпущених груп
 
-    # --- класи ---
 
     def node_class(self, name: str | None) -> NodeClass:
         fam = self.families["node"]
@@ -106,11 +57,6 @@ class LayeredGraph:
         return True
 
     def _sync_layer_type(self, name: str, directed: bool):
-        """Конвертує шар класу, якщо його напрямленість змінилась.
-
-        Орієнтація наявних ребер при цьому довільна, але стабільна:
-        береться поточний порядок кінців у шарі.
-        """
         old = self.layers.get(name)
         if old is None or old.is_directed() == directed:
             return
@@ -119,8 +65,6 @@ class LayeredGraph:
             if not (new.has_edge(u, v) or new.has_edge(v, u)):
                 new.add_edge(u, v, **data)
         self.layers[name] = new
-
-    # --- вершини ---
 
     def node(self, nid: int) -> Node:
         return self.nodes[nid]
@@ -133,18 +77,12 @@ class LayeredGraph:
         return nid
 
     def insert_node(self, nid: int, obj: Node):
-        """Кладе готову вершину під заданим id (шлях завантажувача)."""
         self.nodes[nid] = obj
         self._track_node(nid, obj)
         if nid >= self.next_id:
             self.next_id = nid + 1
 
     def remove_node(self, nid: int) -> set[int]:
-        """Прибирає вершину звідусіль; повертає її сусідів по всіх шарах.
-
-        Метавершина групи тягне за собою розпуск своєї групи (члени
-        вільні й лишаються в графі).
-        """
         gid = self.group_of_node.get(nid)
         if gid is not None:
             self.remove_group(gid)
@@ -159,12 +97,6 @@ class LayeredGraph:
         return neighbors
 
     def remove_nodes(self, ids: set[int]) -> set[int]:
-        """Прибирає групу вершин; повертає їхніх сусідів поза групою.
-
-        По одній, а не пачкою по шарах: видалення може розпускати групи
-        й стискати інші, тож порядкові побічні ефекти простіші за
-        батчинг (видаляється зазвичай виділення — десятки вершин).
-        """
         neighbors = set()
         for nid in ids:
             if nid in self.nodes:
@@ -172,7 +104,6 @@ class LayeredGraph:
         return neighbors - ids
 
     def set_node_class(self, nid: int, cls: NodeClass):
-        """Перевести вершину в клас cls, скинувши перекриття стилю."""
         node = self.nodes[nid]
         self._untrack_node(nid, node)
         node.klass = cls
@@ -186,8 +117,6 @@ class LayeredGraph:
         ids = self.node_ids.get(obj.klass.name)
         if ids is not None:
             ids.discard(nid)
-
-    # --- топологія поверх усіх шарів ---
 
     @staticmethod
     def _layer_neighbors(g: nx.Graph, nid: int) -> set[int]:
@@ -216,7 +145,6 @@ class LayeredGraph:
         return sum(g.number_of_edges() for g in self.layers.values())
 
     def component_count(self) -> int:
-        """Компоненти зв'язності об'єднання шарів (напрям — байдуже)."""
         if not self.nodes:
             return 0
         union = nx.Graph()
@@ -224,8 +152,6 @@ class LayeredGraph:
         for g in self.layers.values():
             union.add_edges_from(g.edges())
         return nx.number_connected_components(union)
-
-    # --- ребра ---
 
     def layer(self, class_name: str) -> nx.Graph:
         """Шар класу ребер; створюється ліниво за налаштуванням класу."""
@@ -254,13 +180,11 @@ class LayeredGraph:
         return self.layers[class_name].edges[uv]["obj"]
 
     def add_edge(self, a: int, b: int, class_name: str) -> bool:
-        """Додає ребро a→b у шар класу; False, якщо додати не можна."""
         cls = self.edge_class(class_name)
         return self.insert_edge(cls.name, a, b, Edge(klass=cls))
 
     def insert_edge(self, class_name: str, a: int, b: int,
                     obj: Edge) -> bool:
-        """Кладе готове ребро у шар (шлях завантажувача і add_edge)."""
         if a == b or a not in self.nodes or b not in self.nodes:
             return False
         g = self.layer(class_name)
@@ -270,7 +194,6 @@ class LayeredGraph:
         return True
 
     def bulk_add_edges(self, pairs, edge_cls: EdgeClass) -> int:
-        """Додає ребра пачкою; повертає кількість нових."""
         added = 0
         for a, b in pairs:             # пари йдуть "джерело, ціль"
             if self.insert_edge(edge_cls.name, a, b, Edge(klass=edge_cls)):
@@ -287,7 +210,6 @@ class LayeredGraph:
         return True
 
     def reverse_edge(self, class_name: str, a: int, b: int) -> bool:
-        """Розвертає ребро напрямленого шару: джерело стає ціллю."""
         uv = self.orientation(class_name, a, b)
         g = self.layers.get(class_name)
         if uv is None or not g.is_directed():
@@ -299,10 +221,6 @@ class LayeredGraph:
 
     def set_edge_class(self, class_name: str, a: int, b: int,
                        new_name: str) -> bool:
-        """Переносить ребро в шар іншого класу, скинувши перекриття.
-
-        False, якщо ребра/класу немає або цільова пара вже зайнята.
-        """
         new_cls = self.families["edge"].get(new_name)
         uv = self.orientation(class_name, a, b)
         if new_cls is None or uv is None:
@@ -321,25 +239,11 @@ class LayeredGraph:
         return True
 
     def edges(self):
-        """Ітерує (клас, u, v, Edge) по всіх шарах; u — джерело."""
         for name, g in self.layers.items():
             for u, v, data in g.edges(data=True):
                 yield name, u, v, data["obj"]
 
-    # --- групи вершин ---
-
     def add_group(self, members: set[int]) -> int | None:
-        """Групує видимі вершини пулу; повертає gid або None (менше двох).
-
-        Створює і метавершину групи — звичайну вершину дефолтного класу
-        в центроїді членів (підпис "Група N"). Групою стає те, що
-        користувач бачить у виділенні: вершини РОЗГОРНУТИХ груп
-        переходять у нову групу (стара, лишившись із < 2 членами,
-        розчиняється, її метавершина йде в orphans), інакше повторне
-        групування мовчки відмовляло б через невидиме "членство".
-        Якщо набір точно збігається з наявною групою, дубль не
-        створюється — повертається вона сама.
-        """
         picked = {nid for nid in members
                   if nid in self.nodes and self.visual_owner(nid) == nid}
         if len(picked) < 2:
@@ -364,12 +268,6 @@ class LayeredGraph:
         return gid
 
     def insert_group(self, gid: int, obj: NodeGroup) -> bool:
-        """Кладе готову групу під заданим id (шлях завантажувача).
-
-        Биті записи (нема метавершини, члени зайняті/відсутні, членів
-        менше двох) мовчки відкидаються — файл міг бути зібраний
-        вручну; метавершина тоді лишається звичайною вершиною.
-        """
         obj.members = {nid for nid in obj.members
                        if nid in self.nodes and nid not in self.member_of
                        and nid != obj.node}
@@ -385,11 +283,6 @@ class LayeredGraph:
         return True
 
     def remove_group(self, gid: int) -> int | None:
-        """Розпускає групу; повертає nid її метавершини.
-
-        Члени і метавершина ЛИШАЮТЬСЯ в пулі звичайними вершинами —
-        прибирати метавершину чи ні, вирішує рівень вище.
-        """
         grp = self.groups.pop(gid, None)
         if grp is None:
             return None
@@ -399,8 +292,6 @@ class LayeredGraph:
         return grp.node
 
     def set_collapsed(self, gid: int, collapsed: bool) -> bool:
-        """Згортає/розгортає групу; згорнута метавершина стає в
-        центроїд членів."""
         grp = self.groups.get(gid)
         if grp is None or grp.collapsed == collapsed:
             return False
@@ -414,14 +305,6 @@ class LayeredGraph:
         return True
 
     def visual_owner(self, nid: int) -> int | None:
-        """Вершина, що представляє nid на полі, або None (не видно).
-
-        Підйом ланцюжком членства: представник — метавершина
-        НАЙВИЩОГО згорнутого предка (згорнуте всередині згорнутого
-        показує лише зовнішню групу). Без згорнутих предків вершина
-        видима сама, крім метавершини РОЗГОРНУТОЇ групи — та не видна
-        зовсім, разом зі своїми ребрами.
-        """
         top = None
         cur = nid
         while (gid := self.member_of.get(cur)) is not None:
@@ -437,18 +320,10 @@ class LayeredGraph:
         return nid
 
     def take_orphans(self) -> list[int]:
-        """Забирає чергу метавершин розпущених груп (на видалення)."""
         out, self.orphans = self.orphans, []
         return out
 
     def _forget_member(self, nid: int):
-        """Прибирає вершину з її групи; група з < 2 членів розчиняється.
-
-        Група з однієї вершини не має сенсу (нема чого згортати) і
-        лише невидимо блокувала б цю вершину для нових груп.
-        Метавершина розчиненої групи стає в чергу orphans — видалення
-        вершини звідси зациклило б взаємні виклики з remove_node.
-        """
         gid = self.member_of.pop(nid, None)
         if gid is None:
             return
@@ -457,10 +332,7 @@ class LayeredGraph:
         if len(grp.members) < 2:
             self.orphans.append(self.remove_group(gid))
 
-    # --- сховище цілком ---
-
     def clear(self):
-        """Спорожнює вершини і шари; класи лишаються — вони не елементи."""
         self.nodes.clear()
         self.layers.clear()
         self.node_ids.clear()
@@ -472,11 +344,6 @@ class LayeredGraph:
         self.orphans.clear()
 
     def adopt(self, other: "LayeredGraph"):
-        """Переймає вміст іншого сховища (після завантаження файла).
-
-        Власні контейнери nodes/layers не замінюються, а наповнюються
-        заново: на них посилаються модель вершин і шар малювання.
-        """
         self.families = other.families
         self.nodes.clear()
         self.nodes.update(other.nodes)

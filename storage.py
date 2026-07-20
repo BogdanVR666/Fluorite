@@ -1,45 +1,3 @@
-"""Серіалізація сховища (LayeredGraph) у JSON і назад.
-
-Це "інша структура", що займається файлами: саме сховище (layers.py)
-про них не знає нічого.
-
-Формат файла (version 6):
-{
-  "version": 6,
-  "classes": {                        // класи кожної родини елементів
-    "node": [{"name", "design": {"shape", "color", "opacity"}}, ...],
-    "edge": [{"name", "design": {"color", "width", "line", "directed"}}, ...]
-  },
-  "nodes": [{"id", "x", "y", "label", "description", "class",
-             "style": {"shape": null | "...", ...}}, ...],
-  "edges": [{"a", "b", "label", "description", "class", "style": {...}}, ...],
-  "groups": [{"id", "node", "collapsed", "members": [id, ...]}, ...]
-}
-
-"style" — перекриття стилю конкретного елемента; null означає
-"використовується дизайн класу". Набір полів дизайну і перекриттів
-не прописаний тут жорстко — він береться зі схем родини, тож нові
-поля підхоплюються автоматично. "directed" — поле класу ребер
-(extra_design), у файлі воно лежить у "design" класу.
-
-Напрям ребра напрямленого класу кодує сам порядок кінців: a — джерело,
-b — ціль. Окремого поля "source" version 4 не має; ребра різних класів
-на одній парі вершин — звичайна річ.
-
-"groups" — групи вершин: "node" — id метавершини групи (вона лежить
-серед "nodes" як звичайна вершина: підпис, стиль і ребра — її),
-members — id вершин-членів (можуть бути метавершинами інших груп),
-collapsed — чи група згорнута. У version 5 метавершини ще не було —
-група мала власні label/x/y; при читанні їй довиділяється вершина.
-Файли без "groups" (version 4 і старіші) читаються як граф без груп.
-
-Зберігаються всі класи сховища, навіть порожні, — щоб визначені
-користувачем класи не губилися між сеансами. Старіші файли читаються:
-version 1 підіймається до version 2; у version 2 напрям беруть з
-порядку кінців; version 3 мав поле "source" — за ним ребро
-орієнтується при завантаженні.
-"""
-
 import json
 
 from edges import Edge
@@ -51,7 +9,6 @@ FORMAT_VERSION = 6
 
 
 def _element_to_json(obj: BaseElement) -> dict:
-    """Спільна для всіх родин частина запису елемента."""
     return {"label": obj.label, "description": obj.description,
             "class": obj.klass.name, "style": obj.style.model_dump()}
 
@@ -76,7 +33,6 @@ def graph_to_json(store: LayeredGraph) -> str:
 
 
 def _upgrade_v1(data: dict) -> dict:
-    """Підіймає файл version 1 до формату version 2."""
     data["classes"] = {"node": [
         {"name": c["name"],
          "design": {"shape": c["shape"], "color": c["color"]}}
@@ -90,8 +46,6 @@ def _upgrade_v1(data: dict) -> dict:
 
 
 def _restore_classes(families_json: dict, store: LayeredGraph):
-    """Реєструє класи з файла; наявним (дефолтним) оновлює дизайн — файл
-    є джерелом істини, тож граф виглядатиме так само, як при збереженні."""
     for family, entries in families_json.items():
         fam = store.families.get(family)
         if fam is None:
@@ -106,17 +60,11 @@ def _restore_classes(families_json: dict, store: LayeredGraph):
 
 
 def _style_of(entry: dict, style_type: type) -> dict:
-    """Перекриття стилю елемента з запису файла (лише відомі поля)."""
     return {f: v for f, v in (entry.get("style") or {}).items()
             if f in style_type.model_fields}
 
 
 def graph_from_json(text: str) -> LayeredGraph:
-    """Будує нове сховище з JSON.
-
-    Кидає ValueError, якщо формат не розпізнано. Сховище свіже —
-    жодного глобального стану, класи інших документів не перетікають.
-    """
     data = json.loads(text)
     if not isinstance(data, dict) or "nodes" not in data:
         raise ValueError("це не файл графа")
@@ -142,7 +90,6 @@ def graph_from_json(text: str) -> LayeredGraph:
     style_type = edge_fam.style_type
     for e in data.get("edges", []):
         a, b = e["a"], e["b"]
-        # у version 3 напрям задавало поле "source"; відтоді — порядок кінців
         if version == 3 and e.get("source") == b:
             a, b = b, a
         cls = edge_fam.get(e.get("class")) or edge_fam.default
@@ -155,7 +102,6 @@ def graph_from_json(text: str) -> LayeredGraph:
     for g in data.get("groups", []):
         nid = g.get("node")
         if nid is None:
-            # version 5: група ще не мала метавершини — довиділяємо
             nid = store.next_id
             store.insert_node(nid, Node(
                 klass=node_fam.default,

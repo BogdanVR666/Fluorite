@@ -1,16 +1,3 @@
-"""Стрес-тест GraphBackend: 1000 вершин зі степенем 1, 10 та 100,
-плюс раунд перетягування вершини у повних графах K60 і K120.
-
-Граф будується виключно через публічні слоти бекенда (addNode/addEdge),
-тобто тим самим шляхом, яким його викликає QML. Для кожного раунду
-вимірюється час побудови й основних операцій та перевіряється коректність:
-кількість вершин/ребер і те, що кожна вершина має рівно потрібний степінь.
-Кадр ребер вимірюється так само, як його малює застосунок: EdgeLayer.paint
-у QImage (QQuickPaintedItem рендерить у такий само растровий буфер).
-
-Запуск:  uv run python stress_test.py
-"""
-
 import math
 import os
 import sys
@@ -27,12 +14,10 @@ N_NODES = 1000
 DEGREES = (1, 10, 100)
 SEED = 42
 
-# межа інтерактивності перетягування: 30 кадрів/с
 FRAME_BUDGET_MS = 33.0
 
 
 def paint_frame(layer: EdgeLayer) -> float:
-    """Час одного кадру шару ребер, с."""
     img = QImage(1100, 720, QImage.Format_ARGB32_Premultiplied)
     img.fill(0)
     painter = QPainter(img)
@@ -46,8 +31,6 @@ def paint_frame(layer: EdgeLayer) -> float:
 def build_round(backend: GraphBackend, layer: EdgeLayer,
                 degree: int) -> None:
     print(f"\n=== Раунд: {N_NODES} вершин, у кожної по {degree} ребер ===")
-
-    # --- вершини: розкладаємо по сітці, щоб nodeAt мав що шукати ---
     cols = math.ceil(math.sqrt(N_NODES))
     t0 = time.perf_counter()
     for i in range(N_NODES):
@@ -57,7 +40,6 @@ def build_round(backend: GraphBackend, layer: EdgeLayer,
     t_nodes = time.perf_counter() - t0
     print(f"addNode x{N_NODES}: {t_nodes:.3f} c")
 
-    # --- ребра: випадковий d-регулярний граф гарантує степінь d усім ---
     regular = nx.random_regular_graph(degree, N_NODES, seed=SEED)
     t0 = time.perf_counter()
     for a, b in regular.edges():
@@ -68,14 +50,12 @@ def build_round(backend: GraphBackend, layer: EdgeLayer,
     print(f"addEdge x{n_edges}: {t_edges:.3f} c "
           f"({n_edges / t_edges:.0f} ребер/с)")
 
-    # --- перевірка коректності ---
     store = backend._store
     assert len(store.nodes) == N_NODES, "невірна кількість вершин"
     assert store.edge_count() == n_edges, "невірна кількість ребер"
     bad = [nid for nid in store.nodes if store.degree(nid) != degree]
     assert not bad, f"вершини зі степенем != {degree}: {bad[:5]}…"
 
-    # --- операції, які QML смикає на кожному кадрі/кліку ---
     dt = paint_frame(layer)
     print(f"кадр EdgeLayer ({n_edges} ребер): {dt * 1000:.1f} мс")
 
@@ -103,12 +83,6 @@ def build_round(backend: GraphBackend, layer: EdgeLayer,
 
 def drag_round(backend: GraphBackend, layer: EdgeLayer, n: int,
                budget_ms: float | None) -> None:
-    """Імітує перетягування вершини у повному графі K<n>.
-
-    Кожен "кадр" — це те, що відбувається на рух миші в застосунку:
-    moveNode (оновлення моделі + сигнал) і перемалювання шару ребер.
-    budget_ms — межа мс/кадр (None — лише виміряти й надрукувати).
-    """
     n_edges = n * (n - 1) // 2
     print(f"\n=== Раунд: перетягування у K{n} ({n_edges} ребер) ===")
     cols = math.ceil(math.sqrt(n))
@@ -138,7 +112,6 @@ def drag_round(backend: GraphBackend, layer: EdgeLayer, n: int,
 
 
 def class_round(backend: GraphBackend) -> None:
-    """Групові операції через класи вершин і ребер: кліка + вершина→клас."""
     print(f"\n=== Раунд: класи вершин і ребер ({N_NODES} вершин) ===")
     assert backend.createClass("node", "Хаб",
                                {"shape": "diamond", "color": "#f39c12"})
@@ -161,8 +134,6 @@ def class_round(backend: GraphBackend) -> None:
     assert backend._store.edge_count() == want, "кліка неповна"
     strong = next(c for c in backend.classList("edge") if c["name"] == "Міцне")
     assert strong["count"] == want, "ребра кліки мали отримати клас «Міцне»"
-
-    # вершина → клас іде тим самим шляхом, що й у QML: через виділення
     backend.selectNode(hub, False)
     t0 = time.perf_counter()
     msg = backend.connectSelectionToClass("Звичайна", "Звичайне")
@@ -182,7 +153,6 @@ def main() -> int:
     total = time.perf_counter()
     for degree in DEGREES:
         build_round(backend, layer, degree)
-    # K60 — жорсткий бюджет (мета: "більше ніж K50"); K120 — інформаційно
     drag_round(backend, layer, 60, FRAME_BUDGET_MS)
     drag_round(backend, layer, 120, None)
     class_round(backend)
