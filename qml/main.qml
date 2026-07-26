@@ -2,6 +2,7 @@ import QtQuick
 import QtQuick.Controls
 import QtQuick.Dialogs
 import QtQuick.Layouts
+import QtQuick.Shapes
 import Graphs
 
 /*
@@ -318,7 +319,6 @@ ApplicationWindow {
                 root.edgeSrcY = info.y
                 root.edgeDragX = mouse.x
                 root.edgeDragY = mouse.y
-                canvas.requestPaint()
             }
 
             onPositionChanged: function (mouse) {
@@ -331,7 +331,6 @@ ApplicationWindow {
                     return
                 root.edgeDragX = mouse.x
                 root.edgeDragY = mouse.y
-                canvas.requestPaint()
             }
 
             onReleased: function (mouse) {
@@ -351,7 +350,6 @@ ApplicationWindow {
                     // Відпустили на тій самій вершині — контекстне меню
                     root.openNodeMenu(src, mouse.x, mouse.y)
                 }
-                canvas.requestPaint()
             }
         }
 
@@ -362,24 +360,23 @@ ApplicationWindow {
             source: backend
         }
 
-        // Пунктирна "гумка" під час створення ребра ПКМ;
-        // перемальовується лише під час right-drag
-        Canvas {
-            id: canvas
+        // Пунктирна "гумка" під час створення ребра ПКМ. Shape замість
+        // Canvas: кінці лінії оновлюються прив'язками на боці сцени, без
+        // растеризації в повноекранну текстуру, яку Canvas тримав би в
+        // пам'яті постійно.
+        Shape {
+            visible: root.edgeSourceId !== -1
             anchors.fill: parent
-            onPaint: {
-                var ctx = getContext("2d")
-                ctx.clearRect(0, 0, width, height)
-                if (root.edgeSourceId === -1)
-                    return
-                ctx.strokeStyle = String(Theme.selection)
-                ctx.lineWidth = 3
-                ctx.setLineDash([6, 5])
-                ctx.beginPath()
-                ctx.moveTo(root.edgeSrcX, root.edgeSrcY)
-                ctx.lineTo(root.edgeDragX, root.edgeDragY)
-                ctx.stroke()
-                ctx.setLineDash([])
+            preferredRendererType: Shape.CurveRenderer
+            ShapePath {
+                fillColor: "transparent"
+                strokeColor: Theme.selection
+                strokeWidth: 3
+                strokeStyle: ShapePath.DashLine
+                dashPattern: [2, 5 / 3]   // 6 і 5 px у одиницях товщини
+                startX: root.edgeSrcX
+                startY: root.edgeSrcY
+                PathLine { x: root.edgeDragX; y: root.edgeDragY }
             }
         }
 

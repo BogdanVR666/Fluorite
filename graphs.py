@@ -750,7 +750,7 @@ class GraphBackend(QObject):
                 f"ребер: {self._store.edge_count()})")
 
 
-class EdgeLayer(QQuickPaintedItem)
+class EdgeLayer(QQuickPaintedItem):
     sourceChanged = Signal()
 
     _DASHES = {"dash": (8.0, 6.0), "dot": (2.0, 5.0)}
@@ -766,9 +766,21 @@ class EdgeLayer(QQuickPaintedItem)
         self._arrows: dict[tuple, list[QLineF]] = {}
         self._curves: dict[tuple, list[tuple[QLineF, float]]] = {}
         self._incident: dict[int, list[tuple[QLineF, bool, tuple | None]]] = {}
+        # Під час перетягування рухаються лише ребра, інцидентні тягнутим
+        # вершинам. Решту растеризуємо один раз у _static і далі щокадру
+        # лише підкладаємо готову картинку, домальовуючи рухомі з _dyn_*.
+        self._moving: set[int] = set()       # вершини, які зараз тягнуть
+        self._static: QImage | None = None   # кеш нерухомих ребер
+        self._dyn_groups: dict[tuple, list[QLineF]] = {}
+        self._dyn_arrows: dict[tuple, list[QLineF]] = {}
+        self._dyn_curves: dict[tuple, list[tuple[QLineF, float]]] = {}
+        self._pens: dict[tuple, QPen] = {}   # перо за стилем: QPen недешевий
         self._fast = False           # поточні кадри — швидкі (шквал)
         self._low_res = False        # текстура зараз зменшена
-        self._buffer: QImage | None = None   # ARGB32-буфер малювання
+        # Малюємо у власний ARGB32-буфер: цільова текстура елемента має
+        # формат RGBA8888, у якому растеризація ліній QPainter у рази
+        # повільніша; готовий буфер лише блітиться в текстуру.
+        self._buffer: QImage | None = None
         self._last_request = 0.0
         self._refine = QTimer(self)
         self._refine.setSingleShot(True)
@@ -798,9 +810,14 @@ class EdgeLayer(QQuickPaintedItem)
 
     def _mark_dirty(self):
         self._groups = None
+        self._static = None
+        self._moving.clear()
         self._request()
 
     def _node_moved(self, nid: int, x: float, y: float):
+        if nid not in self._moving:
+            self._moving.add(nid)
+            self._static = None    # набір рухомих змінився — кеш застарів
         if self._groups is not None:
             point = QPointF(x, y)
             for line, at_p1, barbs in self._incident.get(nid, ()):
@@ -816,6 +833,8 @@ class EdgeLayer(QQuickPaintedItem)
 
     def _refine_pass(self):
         self._fast = False
+        self._moving.clear()        # перетягування скінчилось
+        self._static = None
         if self._low_res:
             self._low_res = False
             self.setTextureSize(QSize())    # авто: розмір елемента × DPR
@@ -879,63 +898,44 @@ class EdgeLayer(QQuickPaintedItem)
         self._arrows = arrows
         self._curves = curves
         self._incident = incident
+        self._static = None      # старі QLineF більше не в кешах
+        self._pens.clear()
 
     def _body_pen(self, color: str, width: float, line: str) -> QPen:
-        pen = QPen(QColor(color))
-        pen.setWidthF(width)
-        pen.setCapStyle(Qt.PenCapStyle.FlatCap)
-        dash = self._DASHES.get(line)
-        if dash:
-            pen.setDashPattern([dash[0] / width, dash[1] / width])
+        key = (color, width, line)
+        pen = self._pens.get(key)
+        if pen is None:
+            pen = QPen(QColor(color))
+            pen.setWidthF(width)
+            pen.setCapStyle(Qt.PenCapStyle.FlatCap)
+            dash = self._DASHES.get(line)
+            if dash:
+                pen.setDashPattern([dash[0] / width, dash[1] / width])
+            self._pens[key] = pen
         return pen
 
     def _head_pen(self, color: str, width: float) -> QPen:
-        pen = QPen(QColor(color))
-        pen.setWidthF(width)
-        pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+        key = (color, width)
+        pen = self._pens.get(key)
+        if pen is None:
+            pen = QPen(QColor(color))
+            pen.setWidthF(width)
+            pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+            self._pens[key] = pen
         return pen
 
-    def paint(self, painter: QPainter):
-        if self._backend is None:
-            return
-        n_edges = self._backend._store.edge_count()
-        if n_edges == 0:
-            return
-        if self._groups is None:
-            self._rebuild()
-
-        dev = painter.device()
-        dw, dh = dev.width(), dev.height()
-        if dw <= 0 or dh <= 0:
-            return
-
-        buf = self._buffer
-        if buf is None or buf.width() != dw or buf.height() != dh:
-            buf = QImage(dw, dh, QImage.Format.Format_ARGB32_Premultiplied)
-            self._buffer = buf
-        buf.fill(0)
-
-        p = QPainter(buf)
-        fast = self._fast and n_edges >= self._FAST_EDGES
-        p.setRenderHint(QPainter.RenderHint.Antialiasing, not fast)
-
-        item_w = self.width()
-        if item_w > 0:
-            s = dw / item_w
-            if abs(s - 1.0) > 0.001:
-                p.scale(s, s)
-
-        for key, lines in self._groups.items():
+    def _draw_edges(self, p: QPainter, groups, arrows, curves):
+        for key, lines in groups.items():
             color, width, line, _ = key
             p.setPen(self._body_pen(color, width, line))
             p.drawLines(lines)
 
-            barbs = self._arrows.get(key)
+            barbs = arrows.get(key)
             if barbs:
                 p.setPen(self._head_pen(color, width))
                 p.drawLines(barbs)
 
-        for key, items in self._curves.items():
+        for key, items in curves.items():
             color, width, line, directed = key
             path = QPainterPath()
             barbs = []
@@ -955,6 +955,100 @@ class EdgeLayer(QQuickPaintedItem)
             if barbs:
                 p.setPen(self._head_pen(color, width))
                 p.drawLines(barbs)
+
+    def _build_static(self, dw: int, dh: int, s: float):
+        """Розкладає ребра на рухомі (_dyn_*) та нерухомі й растеризує
+        нерухомі в картинку _static розміру буфера."""
+        dyn_ids: set[int] = set()
+        for nid in self._moving:
+            for line, _, barbs in self._incident.get(nid, ()):
+                dyn_ids.add(id(line))
+                if barbs is not None:
+                    dyn_ids.add(id(barbs[0]))
+                    dyn_ids.add(id(barbs[1]))
+
+        # Списки містять ті самі QLineF, що їх _node_moved рухає на місці,
+        # тож розбиття лишається чинним протягом усього перетягування.
+        def split(d: dict, ident):
+            stat, dyn = {}, {}
+            for key, items in d.items():
+                moved = [it for it in items if ident(it) in dyn_ids]
+                if not moved:
+                    stat[key] = items
+                    continue
+                dyn[key] = moved
+                rest = [it for it in items if ident(it) not in dyn_ids]
+                if rest:
+                    stat[key] = rest
+            return stat, dyn
+
+        stat_groups, self._dyn_groups = split(self._groups, id)
+        stat_arrows, self._dyn_arrows = split(self._arrows, id)
+        stat_curves, self._dyn_curves = split(self._curves,
+                                              lambda it: id(it[0]))
+
+        img = QImage(dw, dh, QImage.Format.Format_ARGB32_Premultiplied)
+        img.fill(0)
+        p = QPainter(img)
+        # кеш малюється один раз на перетягування — завжди з АА
+        p.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        if abs(s - 1.0) > 0.001:
+            p.scale(s, s)
+        self._draw_edges(p, stat_groups, stat_arrows, stat_curves)
+        p.end()
+        self._static = img
+
+    def paint(self, painter: QPainter):
+        if self._backend is None:
+            return
+        n_edges = self._backend._store.edge_count()
+        if n_edges == 0:
+            return
+        if self._groups is None:
+            self._rebuild()
+
+        dev = painter.device()
+        dw, dh = dev.width(), dev.height()
+        if dw <= 0 or dh <= 0:
+            return
+
+        item_w = self.width()
+        s = dw / item_w if item_w > 0 else 1.0
+
+        # кеш нерухомих ребер має сенс лише коли їх багато
+        cached = bool(self._moving) and n_edges >= self._FAST_EDGES
+        if cached and (self._static is None
+                       or self._static.width() != dw
+                       or self._static.height() != dh):
+            self._build_static(dw, dh, s)
+
+        buf = self._buffer
+        if buf is None or buf.width() != dw or buf.height() != dh:
+            buf = QImage(dw, dh, QImage.Format.Format_ARGB32_Premultiplied)
+            self._buffer = buf
+        if not cached:
+            buf.fill(0)
+
+        p = QPainter(buf)
+        fast = self._fast and n_edges >= self._FAST_EDGES
+        p.setRenderHint(QPainter.RenderHint.Antialiasing, not fast)
+
+        if cached:
+            # Source: картинка замінює вміст буфера, окремий fill не треба
+            p.setCompositionMode(
+                QPainter.CompositionMode.CompositionMode_Source)
+            p.drawImage(0, 0, self._static)
+            p.setCompositionMode(
+                QPainter.CompositionMode.CompositionMode_SourceOver)
+
+        if abs(s - 1.0) > 0.001:
+            p.scale(s, s)
+
+        if cached:
+            self._draw_edges(p, self._dyn_groups, self._dyn_arrows,
+                             self._dyn_curves)
+        else:
+            self._draw_edges(p, self._groups, self._arrows, self._curves)
         p.end()
 
         painter.save()

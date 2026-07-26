@@ -60,7 +60,7 @@ class Family:
         return self.classes.get(name)
 
     def define(self, name: str, **design) -> ElementClass | None:
-       name = name.strip()
+        name = name.strip()
         if not name or name in self.classes:
             return None
         cls = self.class_type(name=name)
