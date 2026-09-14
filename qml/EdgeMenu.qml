@@ -2,12 +2,7 @@ import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
 
-/*
- * Контекстне меню ребра: спливає при ПКМ на ребрі, біля курсора.
- * Дозволяє змінити стиль лінії саме цього ребра, його клас,
- * або видалити ребро. Суто презентаційний компонент — яке саме ребро
- * редагувати і що робити з натисканнями, вирішує власник (main.qml).
- */
+
 Popup {
     id: menu
 
@@ -19,8 +14,7 @@ Popup {
     property string currentColor: Theme.nodePalette[0]
     property string currentClass: ""   // клас цього ребра
     property bool currentDirected: false   // спрямоване (з дизайну класу)
-    property var classes: []           // [{name, count, color, width, line,
-                                       //   directed}]
+    property var classes: []           // [{name, count, color, width, line, directed}]
 
     readonly property var classNames: classes.map(function (c) { return c.name })
 
@@ -31,8 +25,6 @@ Popup {
     signal reverseRequested()
     signal removeRequested()
 
-    // ComboBox рве прив'язку currentIndex після вибору користувача,
-    // тож виставляємо індекс щоразу при відкритті
     onOpened: classCombo.currentIndex = classNames.indexOf(currentClass)
 
     padding: 0
@@ -55,7 +47,7 @@ Popup {
     }
 
     contentItem: Item {
-        implicitWidth: 190
+        implicitWidth: Math.max(col.implicitWidth + 24, 150)
         implicitHeight: col.implicitHeight + 24
 
         ColumnLayout {
@@ -181,8 +173,6 @@ Popup {
                 }
             }
 
-            // Напрям задає клас, а куди саме дивиться стрілка — це вже
-            // дані ребра, тож перемикач живе тут, а не в панелі класів
             Button {
                 visible: menu.currentDirected
                 text: "⇄ Перевернути напрям"

@@ -2,22 +2,9 @@ import QtQuick
 import QtQuick.Controls
 import QtQuick.Shapes
 
-/*
- * Вершина графа. Отримує дані з ролей моделі (required property),
- * стан — через звичайні властивості, а про дії повідомляє сигналами.
- * Жодної логіки застосунку тут немає — лише вигляд і жести.
- *
- * Заради швидкодії делегат тримає створеним лише те, що видно зараз:
- * коло, квадрат і ромб — це один Rectangle (коло — радіусом у півширини,
- * ромб — поворотом на 45°), і тільки трикутник потребує Shape. Кільце
- * виділення, "стопка" групи та бейджі живуть у Loader-ах і з'являються
- * лише за потреби. Так типова вершина — це кілька елементів сцени
- * замість десятка Shape із CurveRenderer у кожної.
- */
 Item {
     id: node
 
-    // --- дані з ролей NodesModel ---
     required property int nodeId
     required property real px
     required property real py
@@ -33,24 +20,18 @@ Item {
     required property bool isGroup        // метавершина групи
     required property int memberCount     // вершин у її групі
 
-    // --- сигнали для власника ---
-    // modifiers — Qt.ShiftModifier тощо; що вони означають, вирішує власник
     signal tapped(int modifiers)
     signal moved(real cx, real cy)     // нові координати центру
 
-    width: 44
+    width: Math.max(44, textElement.width + 20)
     height: 44
     x: px - width / 2
     y: py - height / 2
     z: hoverArea.containsMouse ? 2 : 1
-    // сховане (члени згорнутих груп, метавершини розгорнутих) не видно
     visible: !nodeHidden
 
-    // Метавершина групи має незмінну форму — "стопку" квадратів; форма
-    // з дизайну класу/стилю на неї не діє
     readonly property string effShape: isGroup ? "square" : nodeShape
 
-    // hover: плавне збільшення
     scale: hoverArea.containsMouse ? 1.18 : 1.0
     Behavior on scale { NumberAnimation { duration: 120 } }
 
@@ -58,18 +39,12 @@ Item {
         hoverArea.containsMouse ? Theme.foreground
                                 : Qt.alpha(Theme.foreground, 0.78)
 
-    // Кільце виділення повторює форму вершини: та сама геометрія, лише
-    // в рамці, більшій на RING_PAD з кожного боку.
-    // Рівномірний приріст рамки дає рівномірний зазор лише колу й квадрату:
-    // у ромба й трикутника краї похилі, тож перпендикулярна відстань виходить
-    // меншою за приріст (для ромба — у ~√2 разів). Компенсуємо падингом.
     readonly property real ringPad: effShape === "triangle" ? 11
                                   : effShape === "diamond" ? 9
                                                            : 6
     readonly property real ringW: width + ringPad * 2
     readonly property real ringH: height + ringPad * 2
 
-    // --- кільце виділення: створюється лише коли вершина виділена ---
     Loader {
         active: node.nodeSelected
         anchors.centerIn: parent
@@ -80,7 +55,6 @@ Item {
         id: ringRect   // коло, квадрат і ромб — Rectangle без заливки
         Rectangle {
             readonly property bool diamond: node.effShape === "diamond"
-            // ромб — квадрат, повернутий на 45°: сторона менша в √2 разів
             width: diamond ? node.ringW / Math.SQRT2 : node.ringW
             height: diamond ? node.ringH / Math.SQRT2 : node.ringH
             rotation: diamond ? 45 : 0
@@ -110,9 +84,6 @@ Item {
         }
     }
 
-    // --- форма ---
-    // Коло, квадрат і ромб — один спільний Rectangle; трикутник і
-    // "стопка" групи вантажаться Loader-ом лише за потреби.
     Rectangle {
         visible: !node.isGroup && node.nodeShape !== "triangle"
         readonly property bool diamond: node.nodeShape === "diamond"
@@ -151,8 +122,6 @@ Item {
         }
     }
 
-    // Метавершина групи: "стопка" зсунутих квадратів замість форми.
-    // Колір і прозорість — як у звичайної вершини (стиль діє).
     Loader {
         active: node.isGroup
         anchors.fill: parent
@@ -164,22 +133,30 @@ Item {
             opacity: node.nodeOpacity
 
             Rectangle {
-                x: 7; y: 7; width: node.width - 8; height: node.height - 8
+                x: 7 
+                y: 7
+                width: node.width - 8
+                height: node.height - 8
                 radius: 9
                 color: Qt.darker(node.nodeColor, 1.8)
                 border.color: Qt.alpha(node.strokeColor, 0.5)
                 border.width: 1.5
             }
             Rectangle {
-                x: 3.5; y: 3.5
-                width: node.width - 8; height: node.height - 8
+                x: 3.5
+                y: 3.5
+                width: node.width - 8
+                height: node.height - 8
                 radius: 9
                 color: Qt.darker(node.nodeColor, 1.35)
                 border.color: Qt.alpha(node.strokeColor, 0.7)
                 border.width: 1.5
             }
             Rectangle {
-                x: 0; y: 0; width: node.width - 8; height: node.height - 8
+                x: 0
+                y: 0 
+                width: node.width - 8
+                height: node.height - 8
                 radius: 9
                 color: node.nodeColor
                 border.color: node.strokeColor
@@ -189,10 +166,8 @@ Item {
     }
 
     Text {
-        anchors.horizontalCenter: parent.horizontalCenter
-        // передній аркуш "стопки" групи зсунутий на 4px вліво-вгору
-        anchors.horizontalCenterOffset: node.isGroup ? -4 : 0
-        // у трикутника центр мас нижче
+        id: textElement
+        anchors.centerIn: parent
         y: node.effShape === "triangle"
            ? parent.height * 0.42
            : (parent.height - height) / 2 - (node.isGroup ? 4 : 0)
@@ -204,7 +179,6 @@ Item {
         styleColor: Qt.alpha(Theme.background, 0.38)
     }
 
-    // Бейдж зі ступенем вершини
     Loader {
         active: node.degree > 0
         anchors.right: parent.right
@@ -230,7 +204,6 @@ Item {
         }
     }
 
-    // Бейдж із кількістю вершин у групі (лише в метавершини)
     Loader {
         active: node.isGroup
         anchors.left: parent.left
@@ -255,17 +228,10 @@ Item {
             }
         }
     }
-
-    // hover: підказка з даними вершини. Текст складається лише під
-    // курсором — інакше кожна зміна ступеня перебудовувала б рядки
-    // в усіх вершинах графа.
     ToolTip.visible: hoverArea.containsMouse && !hoverArea.drag.active
     ToolTip.delay: 350
-    ToolTip.text: !hoverArea.containsMouse ? ""
-        : (isGroup ? "Група " + label + "  •  вершин: " + memberCount
-                   : "Вершина " + label + "  •  клас: " + nodeClass)
-          + "  •  ступінь: " + degree
-          + (nodeDescription !== "" ? "\n" + nodeDescription : "")
+    ToolTip.text: isGroup ? 
+        "Група " + label + "  •  вершин: " + memberCount : "Вершина " + label + "  •  клас: " + nodeClass + "  •  ступінь: " + degree +  "\n" + nodeDescription
 
     MouseArea {
         id: hoverArea

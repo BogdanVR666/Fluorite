@@ -1,17 +1,9 @@
 pragma Singleton
 import QtQuick
 
-/*
- * Тема застосунку, сумісна з колірними темами VS Code.
- * `colors` зберігає стандартні ключі з секції "colors" JSON-теми VS Code,
- * тож будь-яка тема підключається без змін у решті коду:
- *   Theme.load(JSON.parse(вмістФайлаТеми))   // або лише його "colors"
- * Решта QML користується ролями нижче (Theme.background, Theme.accent...).
- */
 QtObject {
     id: theme
 
-    // Ключі VS Code; дефолт відтворює поточний вигляд застосунку
     property var colors: ({
         "editor.background":           "#222222",
         "editor.foreground":           "#ffffff",
@@ -43,13 +35,10 @@ QtObject {
         "terminal.ansiWhite":          "#95a5a6"
     })
 
-    // Приймає розпарсений JSON теми VS Code цілком або лише його "colors"
     function load(vsTheme) {
         colors = vsTheme && vsTheme.colors ? vsTheme.colors : vsTheme
     }
 
-    // Колір за ключем VS Code; теми пишуть альфу в кінці (#RRGGBBAA),
-    // а QML чекає її на початку (#AARRGGBB) — конвертуємо на льоту
     function c(key, fallback) {
         var v = colors[key]
         if (v === undefined)
@@ -61,7 +50,6 @@ QtObject {
         return v
     }
 
-    // ---- ролі застосунку, замаплені на ключі VS Code ----
     readonly property color background:    c("editor.background", "#1e1e1e")
     readonly property color foreground:    c("editor.foreground", "#d4d4d4")
     readonly property color toolbar:       c("titleBar.activeBackground", "#2a2a3d")
@@ -83,7 +71,6 @@ QtObject {
     readonly property color badgeText:     c("badge.foreground", "#ffffff")
     readonly property color error:         c("errorForeground", "#f48771")
 
-    // Палітра вершин — з ANSI-кольорів термінала (є в кожній темі VS Code)
     readonly property var nodePalette: [
         c("terminal.ansiBlue",          "#3d7bd9"),
         c("terminal.ansiRed",           "#e74c3c"),

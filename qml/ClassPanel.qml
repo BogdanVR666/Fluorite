@@ -2,32 +2,20 @@ import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
 
-/*
- * Панель класів елементів графа. Суто презентаційний компонент:
- * перемикач родини (вершини/ребра), список зареєстрованих класів
- * обраної родини та форма стилю. Форма дворежимна: коли клас обрано —
- * редагує його дизайн (зміни застосовуються одразу), коли вибір знято
- * (повторний клік по класу) — створює новий клас. Про дії користувача
- * повідомляє сигналами — що з ними робити, вирішує main.qml.
- */
 Rectangle {
     id: panel
 
-    // з backend.classList("node") / classList("edge")
     property var nodeClasses: []       // [{name, count, shape, color, opacity}]
-    property var edgeClasses: []       // [{name, count, color, width, line,
-                                       //   directed}]
+    property var edgeClasses: []       // [{name, count, color, width, line, directed}]
     property string currentNodeClass: ""   // клас для НОВИХ вершин
     property string currentEdgeClass: ""   // клас для НОВИХ ребер
 
-    // родина, показана зараз; від неї залежить список і форма створення
     property string family: "node"
     readonly property bool nodesShown: family === "node"
     readonly property var classes: nodesShown ? nodeClasses : edgeClasses
     readonly property string currentClass: nodesShown ? currentNodeClass
                                                       : currentEdgeClass
 
-    // клас обрано — форма редагує його; інакше — створює новий
     readonly property bool editing: currentClass !== ""
 
     signal classPicked(string family, string name)
@@ -42,7 +30,6 @@ Rectangle {
         nameField.text = ""
     }
 
-    // заповнює форму дизайном обраного класу
     function loadDesign() {
         if (!editing)
             return
@@ -63,7 +50,6 @@ Rectangle {
         }
     }
 
-    // шле поточний дизайн форми як новий дизайн обраного класу
     function pushDesign() {
         if (!editing)
             return
@@ -74,8 +60,6 @@ Rectangle {
     }
 
     onCurrentClassChanged: loadDesign()
-    // список приходить пізніше за вибір (та оновлюється після pushDesign
-    // тими самими значеннями) — перечитуємо без побічних ефектів
     onClassesChanged: loadDesign()
 
     readonly property var familyDefs: [
@@ -105,15 +89,12 @@ Rectangle {
                 return defs[i].glyph
         return defs[0].glyph
     }
-    // значок класу в списку: форма вершини або лінія ребра
-    // (спрямованому ребру дописуємо вістря)
     function classGlyph(cls) {
         return nodesShown ? glyphIn(shapeDefs, cls.shape)
                           : glyphIn(lineDefs, cls.line)
                             + (cls.directed === true ? "▶" : "")
     }
 
-    // дизайн майбутнього класу
     property string newShape: "circle"
     property string newLine: "solid"
     property real newWidth: 2.5
@@ -124,9 +105,6 @@ Rectangle {
     width: 210
     color: Theme.panel
 
-    // Клік по порожньому тлу панелі знімає вибір класу — так само, як
-    // повторний клік по обраному рядку. Оголошена першою, тож лежить під
-    // усім вмістом і дістає лише ті кліки, які ніхто інший не забрав.
     MouseArea {
         anchors.fill: parent
         onClicked: panel.classPicked(panel.family, "")
@@ -144,7 +122,6 @@ Rectangle {
             font.pixelSize: 14
         }
 
-        // ---- перемикач родини ----
         RowLayout {
             Layout.fillWidth: true
             spacing: 6
@@ -180,7 +157,6 @@ Rectangle {
             }
         }
 
-        // ---- список класів; клік — клас для нових елементів ----
         ListView {
             id: classList
             Layout.fillWidth: true
@@ -189,11 +165,6 @@ Rectangle {
             spacing: 4
             model: panel.classes
 
-            // Порожнє місце під рядками належить ListView, а Flickable
-            // забирає прес собі й не пропускає його до тла панелі —
-            // звичайна MouseArea тут не спрацює. TapHandler живе на самому
-            // Flickable, не заважає прокрутці й не бачить кліків по рядках:
-            // їхні MouseArea перехоплюють захоплення першими.
             TapHandler {
                 onTapped: panel.classPicked(panel.family, "")
             }
@@ -239,8 +210,6 @@ Rectangle {
                     anchors.fill: parent
                     hoverEnabled: true
                     cursorShape: Qt.PointingHandCursor
-                    // повторний клік по обраному класу знімає вибір —
-                    // форма перемикається у режим створення нового
                     onClicked: panel.classPicked(
                         panel.family,
                         panel.currentClass === parent.modelData.name
@@ -259,7 +228,6 @@ Rectangle {
 
         Rectangle { Layout.fillWidth: true; height: 1; color: Theme.border }
 
-        // ---- форма стилю: редагування обраного класу або створення ----
         Label {
             text: panel.editing ? "Клас «" + panel.currentClass + "»"
                                 : "Новий клас"
@@ -276,7 +244,6 @@ Rectangle {
             placeholderText: "Назва класу"
         }
 
-        // форма вершини (лише родина "node")
         GridLayout {
             columns: 4
             columnSpacing: 6
@@ -314,7 +281,6 @@ Rectangle {
             }
         }
 
-        // прозорість вершини (лише родина "node")
         RowLayout {
             Layout.fillWidth: true
             visible: panel.nodesShown
@@ -341,8 +307,6 @@ Rectangle {
                 panel.newOpacity = value
                 panel.pushDesign()
             }
-            // взаємодія рве прив'язку value — відновлюємо її вручну,
-            // коли дизайн завантажується з обраного класу
             Connections {
                 target: panel
                 function onNewOpacityChanged() {
@@ -351,7 +315,6 @@ Rectangle {
             }
         }
 
-        // стиль лінії (лише родина "edge")
         GridLayout {
             columns: 3
             columnSpacing: 6
@@ -389,7 +352,6 @@ Rectangle {
             }
         }
 
-        // товщина лінії (лише родина "edge")
         GridLayout {
             columns: 3
             columnSpacing: 6
@@ -428,8 +390,6 @@ Rectangle {
             }
         }
 
-        // напрям ребра (лише родина "edge"): ребра спрямованого класу
-        // малюються зі стрілкою в бік цілі
         GridLayout {
             columns: 2
             columnSpacing: 6

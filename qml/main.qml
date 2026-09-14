@@ -5,12 +5,6 @@ import QtQuick.Layouts
 import QtQuick.Shapes
 import Graphs
 
-/*
- * Головне вікно: режими роботи, робоче поле з ребрами (EdgeLayer,
- * малюється на боці Python) та вершинами (Repeater із Node), панель
- * класів (ClassPanel), контекстні меню вершини (NodeMenu) та ребра
- * (EdgeMenu). Уся логіка застосунку живе тут; решта — "дурні" компоненти.
- */
 ApplicationWindow {
     id: root
     width: 1100
@@ -21,11 +15,8 @@ ApplicationWindow {
 
     property string statusMsg: ""
 
-    // --- класи вершин і ребер ---
-    // кеш backend.classList(родина); оновлюється за сигналами бекенда
     property var nodeClasses: []
     property var edgeClasses: []
-    // класи, які отримають нові вершини та нові ребра
     property string currentClass: "Звичайна"
     property string currentEdgeClass: "Звичайне"
 
@@ -38,16 +29,9 @@ ApplicationWindow {
     Connections {
         target: backend
         function onClassesChanged() { root.refreshClasses() }
-        // Лічильники елементів у класах живуть у classList. Слухаємо
-        // summaryChanged, а не graphChanged: бекенд шле його з паузою,
-        // тож імпорт файла чи кліка на сотні вершин не перебудовують
-        // список класів (і не переверстують панель) на кожен елемент.
         function onSummaryChanged() { root.refreshClasses() }
     }
 
-    // --- виділення рамкою ---
-    // Сам набір виділених живе в бекенді (роль nodeSelected моделі);
-    // тут лише геометрія гумової рамки, поки її тягнуть.
     property bool banding: false
     property bool bandAdditive: false      // Shift — додавати до наявного
     property real bandX0: 0
@@ -59,8 +43,6 @@ ApplicationWindow {
                                              Math.abs(bandX1 - bandX0),
                                              Math.abs(bandY1 - bandY0))
 
-    // --- створення ребра перетягуванням ПКМ ---
-    // Вершина-джерело під час right-drag; -1 — перетягування немає
     property int edgeSourceId: -1
     property real edgeSrcX: 0
     property real edgeSrcY: 0
@@ -72,16 +54,8 @@ ApplicationWindow {
         root.statusMsg = ""
     }
 
-    // --- розкладка контекстних меню ---
-    // Точка, у якій викликали меню (координати робочого поля). Меню
-    // прив'язують до неї x/y біндингами, тож позиція перераховується,
-    // коли стане відомою справжня висота (вміст верстається після open)
-    // і коли він змінюється на льоту — наприклад, росте поле опису.
     property point menuAnchor: Qt.point(0, 0)
 
-    // Меню розкривається вниз-праворуч від курсора, а якщо там не влазить
-    // у робоче поле — у протилежний бік. Інакше в нижніх вершин пункт
-    // «Видалити» лишався б за краєм вікна.
     function menuX(w) {
         return root.menuAnchor.x + w <= workspace.width ? root.menuAnchor.x
              : root.menuAnchor.x - w >= 0 ? root.menuAnchor.x - w
@@ -93,11 +67,7 @@ ApplicationWindow {
              : Math.max(0, workspace.height - h)
     }
 
-    // Відкрити контекстне меню вершини id у точці (px, py) робочого поля
     function openNodeMenu(id, px, py) {
-        // ПКМ по невиділеній вершині робить її єдиною виділеною — тоді
-        // меню завжди діє рівно на поточне виділення, як у файлових
-        // менеджерах, і не треба окремої гілки "одна вершина / група"
         if (!backend.isSelected(id))
             backend.selectNode(id, false)
         var info = backend.nodeInfo(id)
@@ -117,9 +87,6 @@ ApplicationWindow {
         nodeMenu.open()
     }
 
-    // Відкрити контекстне меню ребра klass:(a, b) у точці (px, py)
-    // робочого поля. Клас — частина адреси ребра: на одній парі вершин
-    // можуть співіснувати ребра різних класів.
     function openEdgeMenu(klass, a, b, px, py) {
         var info = backend.edgeInfo(klass, a, b)
         if (!info.klass)
@@ -136,12 +103,10 @@ ApplicationWindow {
         edgeMenu.open()
     }
 
-    // ЛКМ по порожньому полю: або завершення рамки, або звичайний клік
     function finishBandOrClick(mx, my, modifiers) {
         var wasBanding = root.banding
         root.banding = false
         var r = root.bandRect
-        // мікрорух мишею під час кліку — це клік, а не рамка
         if (wasBanding && (r.width >= 4 || r.height >= 4)) {
             var hits = backend.selectInRect(r.x, r.y, r.width, r.height,
                                             root.bandAdditive)
@@ -150,9 +115,6 @@ ApplicationWindow {
                 : "У рамку не потрапила жодна вершина"
             return
         }
-        // Клік по полю при наявному виділенні лише знімає його: перший
-        // клік скидає, і тільки наступний створює вершину. Shift тримає
-        // виділення, тож із ним вершина створюється одразу.
         if (backend.selectionCount > 0
                 && (modifiers & Qt.ShiftModifier) === 0) {
             backend.clearSelection()
@@ -163,13 +125,11 @@ ApplicationWindow {
     }
 
     function handleNodeTap(id, modifiers) {
-        // Shift набирає виділення по одній, звичайний клік — рівно одна
         backend.selectNode(id, (modifiers & Qt.ShiftModifier) !== 0)
         root.statusMsg = backend.selectionCount > 1
             ? "Виділено вершин: " + backend.selectionCount : ""
     }
 
-    // Delete прибирає все виділення; Escape — знімає його
     Shortcut {
         sequences: [StandardKey.Delete, "Backspace"]
         onActivated: {
@@ -215,7 +175,6 @@ ApplicationWindow {
         }
     }
 
-    // ============ Панель класів елементів (вершин і ребер) ============
     ClassPanel {
         id: classPanel
         anchors { left: parent.left; top: parent.top; bottom: parent.bottom }
@@ -277,26 +236,17 @@ ApplicationWindow {
         }
     }
 
-    // ==================== Робоче поле ====================
     Item {
         id: workspace
         anchors { left: classPanel.right; right: parent.right
                   top: parent.top; bottom: parent.bottom }
 
-        // ЛКМ — клік по порожньому місцю; ПКМ — меню/створення ребра.
-        // Права кнопка "провалюється" крізь вершини (їхній MouseArea
-        // приймає лише ЛКМ), тож увесь right-drag обробляємо тут через
-        // хіт-тест backend.nodeAt().
         MouseArea {
             anchors.fill: parent
             acceptedButtons: Qt.LeftButton | Qt.RightButton
 
-            // ЛКМ обробляємо в onReleased, а не в onClicked: інакше клік
-            // приходив би ще й після протягування рамки виділення.
             onPressed: function (mouse) {
                 if (mouse.button === Qt.LeftButton) {
-                    // Рамку починаємо завжди: якщо мишу не зрушили,
-                    // onReleased розпізнає це як звичайний клік
                     root.bandAdditive =
                         (mouse.modifiers & Qt.ShiftModifier) !== 0
                     root.bandX0 = root.bandX1 = mouse.x
@@ -306,7 +256,6 @@ ApplicationWindow {
                 }
                 var id = backend.nodeAt(mouse.x, mouse.y)
                 if (id === -1) {
-                    // ПКМ повз вершини — можливо, влучили в ребро
                     var edge = backend.edgeAt(mouse.x, mouse.y)
                     if (edge.a !== undefined)
                         root.openEdgeMenu(edge.klass, edge.a, edge.b,
@@ -347,23 +296,16 @@ ApplicationWindow {
                     if (!backend.addEdge(src, tgt, root.currentEdgeClass))
                         root.statusMsg = "Таке ребро вже існує"
                 } else if (tgt === src) {
-                    // Відпустили на тій самій вершині — контекстне меню
                     root.openNodeMenu(src, mouse.x, mouse.y)
                 }
             }
         }
 
-        // Шар ребер: Python малює їх напряму з графа (без edgeList)
-        // і сам перемальовується за сигналами бекенда
         EdgeLayer {
             anchors.fill: parent
             source: backend
         }
 
-        // Пунктирна "гумка" під час створення ребра ПКМ. Shape замість
-        // Canvas: кінці лінії оновлюються прив'язками на боці сцени, без
-        // растеризації в повноекранну текстуру, яку Canvas тримав би в
-        // пам'яті постійно.
         Shape {
             visible: root.edgeSourceId !== -1
             anchors.fill: parent
@@ -380,7 +322,6 @@ ApplicationWindow {
             }
         }
 
-        // Шар вершин — модель приходить із Python
         Repeater {
             model: backend.nodesModel
 
@@ -391,7 +332,6 @@ ApplicationWindow {
                     root.handleNodeTap(nodeId, modifiers)
                 }
                 onMoved: function (cx, cy) {
-                    // тягнемо одну з виділених — їде вся група
                     if (nodeItem.nodeSelected && backend.selectionCount > 1)
                         backend.moveSelectionTo(nodeId, cx, cy)
                     else
@@ -400,7 +340,6 @@ ApplicationWindow {
             }
         }
 
-        // Гумова рамка виділення — поверх вершин (у них z 1..2)
         Rectangle {
             z: 3
             visible: root.banding
@@ -413,7 +352,6 @@ ApplicationWindow {
             border.width: 1
         }
 
-        // Контекстне меню вершини (ПКМ по вершині): стиль + видалення
         NodeMenu {
             id: nodeMenu
             classes: root.nodeClasses
@@ -421,7 +359,6 @@ ApplicationWindow {
             x: root.menuX(width)
             y: root.menuY(height)
 
-            // скільки вершин зачепить дія (текст правимо лише в одної)
             selectionCount: backend.selectionCount
 
             onClassPicked: function (name) {
@@ -500,7 +437,6 @@ ApplicationWindow {
             }
         }
 
-        // Контекстне меню ребра (ПКМ по ребру): стиль лінії + видалення
         EdgeMenu {
             id: edgeMenu
             classes: root.edgeClasses
@@ -529,8 +465,6 @@ ApplicationWindow {
             onClassPicked: function (name) {
                 if (targetA === -1)
                     return
-                // переносить ребро в шар іншого класу; не вдасться, якщо
-                // на цій парі вже є ребро цільового класу
                 if (!backend.setEdgeClass(currentClass, targetA, targetB,
                                           name)) {
                     root.statusMsg = "Ребро класу «" + name
@@ -542,7 +476,6 @@ ApplicationWindow {
                 currentLine = info.line
                 currentWidth = info.width
                 currentColor = String(info.color)
-                // напрямленість і підпис "A → B" беруться з дизайну класу
                 currentDirected = info.directed === true
                 targetLabel = info.label
             }
