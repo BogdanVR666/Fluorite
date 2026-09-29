@@ -1,6 +1,5 @@
 import QtQuick
 import QtQuick.Controls
-import QtQuick.Shapes
 
 Item {
     id: node
@@ -23,103 +22,55 @@ Item {
     signal tapped(int modifiers)
     signal moved(real cx, real cy)     // нові координати центру
 
-    width: Math.max(44, textElement.width + 20)
+    property bool editing: false   // підпис редагується на місці
+
+    function commitLabel(text) {
+        if (!editing)
+            return
+        editing = false
+        var t = text.trim()
+        if (t !== "" && t !== label)
+            backend.setNodeLabel(nodeId, t)
+    }
+
+    width: Math.max(44, (editing && editLoader.item ? editLoader.item.width
+                                                     : textElement.width) + 20)
     height: 44
     x: px - width / 2
     y: py - height / 2
-    z: hoverArea.containsMouse ? 2 : 1
+    z: editing || hoverArea.containsMouse ? 2 : 1
     visible: !nodeHidden
 
     readonly property string effShape: isGroup ? "square" : nodeShape
-
-    scale: hoverArea.containsMouse ? 1.18 : 1.0
-    Behavior on scale { NumberAnimation { duration: 120 } }
 
     property color strokeColor:
         hoverArea.containsMouse ? Theme.foreground
                                 : Qt.alpha(Theme.foreground, 0.78)
 
-    readonly property real ringPad: effShape === "triangle" ? 11
-                                  : effShape === "diamond" ? 9
-                                                           : 6
-    readonly property real ringW: width + ringPad * 2
-    readonly property real ringH: height + ringPad * 2
+    // будь-яка форма, крім кола, малюється квадратом
+    readonly property bool round: effShape === "circle"
 
-    Loader {
-        active: node.nodeSelected
+    Rectangle {   // рамка виділення
+        visible: node.nodeSelected
         anchors.centerIn: parent
-        sourceComponent: node.effShape === "triangle" ? ringTriangle
-                                                      : ringRect
-    }
-    Component {
-        id: ringRect   // коло, квадрат і ромб — Rectangle без заливки
-        Rectangle {
-            readonly property bool diamond: node.effShape === "diamond"
-            width: diamond ? node.ringW / Math.SQRT2 : node.ringW
-            height: diamond ? node.ringH / Math.SQRT2 : node.ringH
-            rotation: diamond ? 45 : 0
-            radius: node.effShape === "circle" ? width / 2 : 9
-            color: "transparent"
-            border.color: Theme.marked
-            border.width: 3
-            antialiasing: true
-        }
-    }
-    Component {
-        id: ringTriangle
-        Shape {
-            width: node.ringW
-            height: node.ringH
-            preferredRendererType: Shape.CurveRenderer
-            ShapePath {
-                fillColor: "transparent"
-                strokeColor: Theme.marked
-                strokeWidth: 3
-                joinStyle: ShapePath.RoundJoin
-                startX: node.ringW / 2; startY: 2
-                PathLine { x: node.ringW - 2; y: node.ringH - 3 }
-                PathLine { x: 2;              y: node.ringH - 3 }
-                PathLine { x: node.ringW / 2; y: 2 }
-            }
-        }
+        width: node.width + 12
+        height: node.height + 12
+        radius: node.round ? width / 2 : 9
+        color: "transparent"
+        border.color: Theme.marked
+        border.width: 3
+        antialiasing: true
     }
 
     Rectangle {
-        visible: !node.isGroup && node.nodeShape !== "triangle"
-        readonly property bool diamond: node.nodeShape === "diamond"
-        anchors.centerIn: parent
-        width: diamond ? (node.width - 4) / Math.SQRT2 : node.width
-        height: diamond ? (node.height - 4) / Math.SQRT2 : node.height
-        rotation: diamond ? 45 : 0
-        radius: node.nodeShape === "circle" ? width / 2
-              : diamond ? 2 : 8
+        visible: !node.isGroup
+        anchors.fill: parent
+        radius: node.round ? width / 2 : 8
         color: node.nodeColor
         border.color: node.strokeColor
         border.width: 2
         opacity: node.nodeOpacity
         antialiasing: true
-    }
-    Loader {
-        active: !node.isGroup && node.nodeShape === "triangle"
-        anchors.fill: parent
-        sourceComponent: triangleShape
-    }
-    Component {
-        id: triangleShape
-        Shape {
-            preferredRendererType: Shape.CurveRenderer
-            opacity: node.nodeOpacity
-            ShapePath {
-                fillColor: node.nodeColor
-                strokeColor: node.strokeColor
-                strokeWidth: 2
-                joinStyle: ShapePath.RoundJoin
-                startX: node.width / 2; startY: 2
-                PathLine { x: node.width - 2; y: node.height - 3 }
-                PathLine { x: 2;              y: node.height - 3 }
-                PathLine { x: node.width / 2; y: 2 }
-            }
-        }
     }
 
     Loader {
@@ -167,16 +118,57 @@ Item {
 
     Text {
         id: textElement
+        visible: !node.editing
         anchors.centerIn: parent
-        y: node.effShape === "triangle"
-           ? parent.height * 0.42
-           : (parent.height - height) / 2 - (node.isGroup ? 4 : 0)
         text: node.label
         color: Theme.foreground
         font.bold: true
         font.pixelSize: 15
         style: Text.Outline
         styleColor: Qt.alpha(Theme.background, 0.38)
+    }
+
+    Loader {
+        id: editLoader
+        active: node.editing
+        anchors.centerIn: parent
+        sourceComponent: labelEditor
+    }
+    Component {
+        id: labelEditor
+        TextInput {
+            width: Math.max(contentWidth + 2, 16)
+            text: node.label
+            color: Theme.foreground
+            font: textElement.font
+            horizontalAlignment: TextInput.AlignHCenter
+            selectByMouse: true
+            selectionColor: Qt.alpha(Theme.marked, 0.45)
+            selectedTextColor: Theme.foreground
+
+            Component.onCompleted: {
+                selectAll()
+                forceActiveFocus()
+            }
+            // інакше Escape забере Shortcut вікна (скидання виділення)
+            Keys.onShortcutOverride: function (event) {
+                event.accepted = event.key === Qt.Key_Escape
+            }
+            Keys.onEscapePressed: node.editing = false
+            onAccepted: node.commitLabel(text)
+            onActiveFocusChanged: {
+                if (!activeFocus)
+                    node.commitLabel(text)
+            }
+
+            Rectangle {
+                anchors { left: parent.left; right: parent.right
+                          top: parent.bottom; topMargin: 1 }
+                height: 2
+                radius: 1
+                color: Theme.marked
+            }
+        }
     }
 
     Loader {
@@ -229,18 +221,23 @@ Item {
         }
     }
     ToolTip.visible: hoverArea.containsMouse && !hoverArea.drag.active
-    ToolTip.delay: 350
+                     && !editing
+    ToolTip.delay: 500
     ToolTip.text: isGroup ? 
         "Група " + label + "  •  вершин: " + memberCount : "Вершина " + label + "  •  клас: " + nodeClass + "  •  ступінь: " + degree +  "\n" + nodeDescription
 
     MouseArea {
         id: hoverArea
         anchors.fill: parent
+        enabled: !node.editing   // клацання йдуть у поле вводу
         hoverEnabled: true
         cursorShape: Qt.SizeAllCursor
         drag.target: node
 
+        // MouseArea сама фокус не бере, а поле вводу має його втратити
+        onPressed: node.forceActiveFocus()
         onClicked: function (mouse) { node.tapped(mouse.modifiers) }
+        onDoubleClicked: node.editing = true
 
         onPositionChanged: {
             if (drag.active)

@@ -30,6 +30,130 @@ Rectangle {
         nameField.text = ""
     }
 
+    function toggleFamily() {
+        family = nodesShown ? "edge" : "node"
+    }
+
+    // Порядок стрілками: класи, поле назви нового класу, його стиль.
+    // Вгору з першого класу — нікуди, вниз зі стилю форми — нікуди.
+    function stepClass(delta) {
+        var names = classes.map(function (c) { return c.name })
+        var i = names.indexOf(currentClass)
+        if (i === -1) {   // форма (або клас, якого вже нема)
+            if (delta < 0 && currentClass === "")
+                nameField.forceActiveFocus()
+            else if (delta < 0)
+                pickAt(names.length - 1)
+            return
+        }
+        i = Math.max(0, i + delta)
+        pickAt(i)
+        if (i === names.length)
+            nameField.forceActiveFocus()
+    }
+    function pickAt(i) {
+        var names = classes.map(function (c) { return c.name })
+        classPicked(family, i < names.length ? names[i] : "")
+        if (i < names.length)
+            classList.positionViewAtIndex(i, ListView.Contain)
+    }
+
+    function cycle(list, value, delta) {
+        var i = list.indexOf(value)
+        return list[(i + delta + list.length) % list.length]
+    }
+    function keysOf(defs) {
+        return defs.map(function (d) { return d.key })
+    }
+    // what: "color" | "shape" | "line" | "width" | "directed"
+    function stepStyle(what, delta) {
+        if (what === "color")
+            newColor = cycle(Theme.nodePalette.map(String), newColor, delta)
+        else if (what === "shape")
+            newShape = cycle(keysOf(shapeDefs), newShape, delta)
+        else if (what === "line")
+            newLine = cycle(keysOf(lineDefs), newLine, delta)
+        else if (what === "width")
+            newWidth = cycle(widthDefs, newWidth, delta)
+        else if (what === "directed")
+            newDirected = !newDirected
+        pushDesign()
+    }
+
+    function submitNew() {
+        var name = nameField.text.trim()
+        if (name === "") {
+            nameField.forceActiveFocus()
+            return
+        }
+        createRequested(family, name, nodesShown
+            ? { shape: newShape, color: newColor, opacity: newOpacity }
+            : { color: newColor, width: newWidth, line: newLine,
+                directed: newDirected })
+    }
+
+    // Клавіатура панелі. keyboard — чи можна взагалі (нема меню й вводу),
+    // arrows — чи вільні стрілки (нема виділених вершин).
+    property bool keyboard: true
+    property bool arrows: true
+
+    Shortcut {
+        sequence: "Tab"
+        enabled: panel.keyboard
+        onActivated: panel.toggleFamily()
+    }
+    Shortcut {
+        sequences: ["Return", "Enter"]
+        enabled: panel.keyboard && !panel.editing
+        onActivated: panel.submitNew()
+    }
+    Shortcut {
+        sequence: "Up"
+        enabled: panel.keyboard && panel.arrows
+        onActivated: panel.stepClass(-1)
+    }
+    Shortcut {
+        sequence: "Down"
+        enabled: panel.keyboard && panel.arrows
+        onActivated: panel.stepClass(1)
+    }
+    // ←/→ колір; Shift — форма чи лінія; Ctrl — товщина; Ctrl+Shift — напрям
+    Shortcut {
+        sequence: "Left"
+        enabled: panel.keyboard && panel.arrows
+        onActivated: panel.stepStyle("color", -1)
+    }
+    Shortcut {
+        sequence: "Right"
+        enabled: panel.keyboard && panel.arrows
+        onActivated: panel.stepStyle("color", 1)
+    }
+    Shortcut {
+        sequence: "Shift+Left"
+        enabled: panel.keyboard && panel.arrows
+        onActivated: panel.stepStyle(panel.nodesShown ? "shape" : "line", -1)
+    }
+    Shortcut {
+        sequence: "Shift+Right"
+        enabled: panel.keyboard && panel.arrows
+        onActivated: panel.stepStyle(panel.nodesShown ? "shape" : "line", 1)
+    }
+    Shortcut {
+        sequence: "Ctrl+Left"
+        enabled: panel.keyboard && panel.arrows && !panel.nodesShown
+        onActivated: panel.stepStyle("width", -1)
+    }
+    Shortcut {
+        sequence: "Ctrl+Right"
+        enabled: panel.keyboard && panel.arrows && !panel.nodesShown
+        onActivated: panel.stepStyle("width", 1)
+    }
+    Shortcut {
+        sequences: ["Ctrl+Shift+Left", "Ctrl+Shift+Right"]
+        enabled: panel.keyboard && panel.arrows && !panel.nodesShown
+        onActivated: panel.stepStyle("directed", 1)
+    }
+
     function loadDesign() {
         if (!editing)
             return
@@ -68,9 +192,7 @@ Rectangle {
     ]
     readonly property var shapeDefs: [
         { key: "circle",   glyph: "●" },
-        { key: "square",   glyph: "■" },
-        { key: "diamond",  glyph: "◆" },
-        { key: "triangle", glyph: "▲" }
+        { key: "square",   glyph: "■" }
     ]
     readonly property var lineDefs: [
         { key: "solid", glyph: "──" },
@@ -90,7 +212,7 @@ Rectangle {
         return defs[0].glyph
     }
     function classGlyph(cls) {
-        return nodesShown ? glyphIn(shapeDefs, cls.shape)
+        return nodesShown ? glyphIn(shapeDefs, cls.shape === "circle" ? "circle" : "square")
                           : glyphIn(lineDefs, cls.line)
                             + (cls.directed === true ? "▶" : "")
     }
@@ -218,7 +340,7 @@ Rectangle {
             }
         }
 
-        Button {
+        FlatButton {
             text: "З'єднати всі"
             visible: panel.nodesShown
             enabled: panel.currentNodeClass !== ""
@@ -237,11 +359,24 @@ Rectangle {
             Layout.fillWidth: true
         }
 
-        TextField {
+        LineField {
             id: nameField
             visible: !panel.editing
             Layout.fillWidth: true
             placeholderText: "Назва класу"
+
+            onAccepted: panel.submitNew()
+            // інакше Escape забере Shortcut вікна (скидання виділення)
+            Keys.onShortcutOverride: function (event) {
+                event.accepted = event.key === Qt.Key_Escape
+            }
+            // вихід із поля — до стилю; вгору — назад до класів
+            Keys.onEscapePressed: panel.forceActiveFocus()
+            Keys.onDownPressed: panel.forceActiveFocus()
+            Keys.onUpPressed: {
+                panel.forceActiveFocus()
+                panel.pickAt(panel.classes.length - 1)
+            }
         }
 
         GridLayout {
@@ -456,20 +591,12 @@ Rectangle {
             }
         }
 
-        Button {
+        FlatButton {
             text: "Створити клас"
             visible: !panel.editing
             Layout.fillWidth: true
             enabled: nameField.text.trim() !== ""
-            onClicked: {
-                var design = panel.nodesShown
-                    ? { shape: panel.newShape, color: panel.newColor,
-                        opacity: panel.newOpacity }
-                    : { color: panel.newColor, width: panel.newWidth,
-                        line: panel.newLine, directed: panel.newDirected }
-                panel.createRequested(panel.family, nameField.text.trim(),
-                                      design)
-            }
+            onClicked: panel.submitNew()
         }
 
         Rectangle { Layout.fillWidth: true; height: 1; color: Theme.border }
@@ -490,19 +617,19 @@ Rectangle {
 
         RowLayout {
             Layout.maximumHeight: 36
-            Button {
+            FlatButton {
                 text: "💾"
                 Layout.fillWidth: true
                 Layout.fillHeight: true
                 onClicked: panel.saveRequested()
             }
-            Button {
+            FlatButton {
                 text: "📂"
                 Layout.fillWidth: true
                 Layout.fillHeight: true
                 onClicked: panel.openRequested()
             }
-            Button {
+            FlatButton {
                 text: "🗑"
                 Layout.fillWidth: true
                 Layout.fillHeight: true

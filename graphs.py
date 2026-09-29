@@ -268,6 +268,7 @@ class GraphBackend(QObject):
     classesChanged = Signal()   # з'явився новий клас вершин
     selectionChanged = Signal() # змінився набір виділених вершин
     summaryChanged = Signal()   # статистика й лічильники класів (з паузою)
+    statusChanged = Signal()    # повідомлення в статус-рядку
 
     _SUMMARY_MS = 100           # не частіше 10 оновлень зведення на секунду
 
@@ -280,6 +281,7 @@ class GraphBackend(QObject):
         self._summary.setSingleShot(True)
         self._summary.setInterval(self._SUMMARY_MS)
         self._summary.timeout.connect(self.summaryChanged)
+        self._status = ""
 
     def _node(self, nid: int) -> Node:
         return self._store.nodes[nid]
@@ -304,6 +306,22 @@ class GraphBackend(QObject):
         c = self._store.component_count()
         return f"Вершин: {n}  •  Ребер: {m}  •  Компонент зв'язності: {c}"
 
+    _HINT = ("ЛКМ по полю — нова вершина, ЛКМ-перетяг — рамка виділення "
+             "(Shift — додати до наявного); Shift+ЛКМ по вершині — виділити "
+             "ще одну, Ctrl+Shift+ЛКМ — з'єднати виділені з нею, Delete — "
+             "видалити виділені; ПКМ по вершині чи ребру — меню, ПКМ-перетяг "
+             "між вершинами — ребро")
+
+    @Property(str, notify=statusChanged)
+    def status(self):
+        """Повідомлення останньої дії, а без нього — підказка з жестами."""
+        return self._status or self._HINT
+
+    def _set_status(self, msg: str):
+        if msg != self._status:
+            self._status = msg
+            self.statusChanged.emit()
+
     @Property(int, notify=selectionChanged)
     def selectionCount(self):
         return len(self._selected)
@@ -323,10 +341,12 @@ class GraphBackend(QObject):
             self._selected.clear()
             self._selected.add(nid)
         self._selection_changed()
+        n = len(self._selected)
+        self._set_status(f"Виділено вершин: {n}" if n > 1 else "")
 
-    @Slot(float, float, float, float, bool, result=int)
+    @Slot(float, float, float, float, bool)
     def selectInRect(self, x: float, y: float, w: float, h: float,
-                     additive: bool) -> int:
+                     additive: bool):
         x2, y2 = x + w, y + h
         hits = {nid for nid, node in self._store.nodes.items()
                 if x <= node.x <= x2 and y <= node.y <= y2
@@ -335,14 +355,16 @@ class GraphBackend(QObject):
             self._selected.clear()
         self._selected |= hits
         self._selection_changed()
-        return len(hits)
+        self._set_status(f"Виділено вершин: {len(self._selected)}" if hits
+                         else "У рамку не потрапила жодна вершина")
 
     @Slot()
     def clearSelection(self):
         if not self._selected:
-            return
+            return   # статус не чіпаємо: тут, напр., «Видалено вершин: N»
         self._selected.clear()
         self._selection_changed()
+        self._set_status("")
 
     @Slot(int, result=bool)
     def isSelected(self, nid: int) -> bool:
@@ -366,14 +388,15 @@ class GraphBackend(QObject):
     @Slot(str, str, "QVariantMap", result=bool)
     def createClass(self, family: str, name: str, design: dict) -> bool:
         if not self._store.create_class(family, name, design):
+            self._set_status(f"Клас «{name}» вже існує")
             return False
         self.classesChanged.emit()
         return True
 
-    @Slot(str, str, "QVariantMap", result=bool)
-    def updateClass(self, family: str, name: str, design: dict) -> bool:
+    @Slot(str, str, "QVariantMap")
+    def updateClass(self, family: str, name: str, design: dict):
         if not self._store.update_class(family, name, design):
-            return False
+            return
         if family == "node":
             self._model.notify_all([NodesModel.ShapeRole,
                                     NodesModel.ColorRole,
@@ -381,7 +404,6 @@ class GraphBackend(QObject):
         else:
             self.edgesChanged.emit()   # кеш EdgeLayer стане недійсним
         self.classesChanged.emit()
-        return True
 
     _CLASS_ROLES = [NodesModel.ShapeRole, NodesModel.ColorRole,
                     NodesModel.OpacityRole, NodesModel.ClassRole]
@@ -391,6 +413,8 @@ class GraphBackend(QObject):
                      new_name: str) -> bool:
         # False, зокрема, коли пара вже зайнята ребром цільового класу
         if not self._store.set_edge_class(klass, a, b, new_name):
+            self._set_status(f"Ребро класу «{new_name}» між цими вершинами "
+                             "вже існує")
             return False
         self._structure_changed()      # перемальовує ребра й лічильники
         return True
@@ -402,14 +426,15 @@ class GraphBackend(QObject):
             self._structure_changed()
         return added
 
-    @Slot(str, str, result=str)
-    def connectClassNodes(self, class_name: str, edge_class: str) -> str:
+    @Slot(str, str)
+    def connectClassNodes(self, class_name: str, edge_class: str):
         ids = self._store.class_ids(class_name)
         if len(ids) < 2:
-            return f"У класі «{class_name}» менше двох вершин"
+            self._set_status(f"У класі «{class_name}» менше двох вершин")
+            return
         added = self._bulk_add_edges(combinations(ids, 2),
                                      self._store.edge_class(edge_class))
-        return f"Клас «{class_name}»: додано ребер — {added}"
+        self._set_status(f"Клас «{class_name}»: додано ребер — {added}")
 
     @Slot(float, float, str)
     def addNode(self, x: float, y: float, class_name: str):
@@ -427,14 +452,14 @@ class GraphBackend(QObject):
         self._node(nid).description = text
         self._model.notify_row(nid, [NodesModel.DescriptionRole])
 
-    @Slot(int, int, str, result=bool)
-    def addEdge(self, a: int, b: int, edge_class: str) -> bool:
+    @Slot(int, int, str)
+    def addEdge(self, a: int, b: int, edge_class: str):
         if not self._store.add_edge(a, b, edge_class):
-            return False
+            self._set_status("Таке ребро вже існує")
+            return
         for nid in (a, b):
             self._model.notify_row(nid, [NodesModel.DegreeRole])
         self._structure_changed()
-        return True
 
     @Slot(str, int, int)
     def removeEdge(self, klass: str, a: int, b: int):
@@ -595,6 +620,7 @@ class GraphBackend(QObject):
     def removeSelection(self):
         if not self._selected:
             return
+        n = len(self._selected)
         doomed = set(self._selected)
         neighbors = self._store.remove_nodes(doomed)
         self._model.remove_nodes(doomed)  # і викидає їх із self._selected
@@ -605,6 +631,7 @@ class GraphBackend(QObject):
         self._selection_changed()
         self._model.notify_all(self._GROUP_ROLES)
         self._structure_changed()
+        self._set_status(f"Видалено вершин: {n}")
 
     @Slot(str)
     def setSelectionClass(self, class_name: str):
@@ -634,26 +661,50 @@ class GraphBackend(QObject):
             self._node(nid).opacity = opacity
         self._model.notify_all([NodesModel.OpacityRole])
 
-    @Slot(str, result=str)
-    def connectSelection(self, edge_class: str) -> str:
+    @Slot(str)
+    def connectSelection(self, edge_class: str):
         if len(self._selected) < 2:
-            return "Виділено менше двох вершин"
+            self._set_status("Виділено менше двох вершин")
+            return
         added = self._bulk_add_edges(combinations(self._selected, 2),
                                      self._store.edge_class(edge_class))
-        return f"Виділено вершин: {len(self._selected)}, додано ребер — {added}"
+        self._set_status(f"Виділено вершин: {len(self._selected)}, "
+                         f"додано ребер — {added}")
 
-    @Slot(str, str, result=str)
+    @Slot(str, str)
     def connectSelectionToClass(self, class_name: str,
-                                edge_class: str) -> str:
+                                edge_class: str):
         if not self._selected:
-            return ""
+            self._set_status("")
+            return
         ids = self._store.class_ids(class_name)
         if not ids or set(ids) <= self._selected:
-            return f"У класі «{class_name}» немає інших вершин"
+            self._set_status(f"У класі «{class_name}» немає інших вершин")
+            return
         added = self._bulk_add_edges(
             ((nid, other) for nid in self._selected for other in ids),
             self._store.edge_class(edge_class))
-        return (f"Виділені → клас «{class_name}»: додано ребер — {added}")
+        self._set_status(
+            f"Виділені → клас «{class_name}»: додано ребер — {added}")
+
+    @Slot(int, str)
+    def connectSelectionTo(self, nid: int, edge_class: str):
+        """Ребра від усіх виділених до nid, потім nid стає виділеною.
+        Виділена nid натомість знімається з виділення, без ребер."""
+        if nid not in self._store.nodes:
+            self._set_status("")
+            return
+        if nid in self._selected:
+            self._selected.discard(nid)
+            self._selection_changed()
+            self._set_status("")
+            return
+        added = self._bulk_add_edges(
+            ((src, nid) for src in self._selected),
+            self._store.edge_class(edge_class))
+        self._selected.add(nid)
+        self._selection_changed()
+        self._set_status(f"Додано ребер: {added}" if added else "")
 
     def _groups_changed(self):
         self._model.notify_all(self._GROUP_ROLES)
@@ -666,11 +717,12 @@ class GraphBackend(QObject):
             self._selected -= hidden
             self._selection_changed()
 
-    @Slot(result=str)
-    def groupSelection(self) -> str:
+    @Slot()
+    def groupSelection(self):
         gid = self._store.add_group(set(self._selected))
         if gid is None:
-            return "Для групи треба щонайменше дві вершини"
+            self._set_status("Для групи треба щонайменше дві вершини")
+            return
         grp = self._store.groups[gid]
         if not self._model.has_node(grp.node):
             self._model.append_node(grp.node)   # свіжа метавершина
@@ -681,7 +733,8 @@ class GraphBackend(QObject):
         self._drain_orphans()          # метавершини поглинутих груп
         self._groups_changed()
         label = self._node(grp.node).label
-        return f"Групу «{label}» згорнуто (вершин: {len(grp.members)})"
+        self._set_status(
+            f"Групу «{label}» згорнуто (вершин: {len(grp.members)})")
 
     @Slot(int, bool)
     def setGroupCollapsed(self, gid: int, collapsed: bool):
@@ -714,31 +767,35 @@ class GraphBackend(QObject):
         self.selectionChanged.emit()
         self.graphChanged.emit()
         self._summary_now()
+        self._set_status("")
 
-    @Slot(QUrl, result=str)
-    def saveToFile(self, url: QUrl) -> str:
+    @Slot(QUrl)
+    def saveToFile(self, url: QUrl):
         path = url.toLocalFile()
         try:
             with open(path, "w", encoding="utf-8") as f:
                 f.write(storage.graph_to_json(self._store))
         except OSError as e:
-            return f"Не вдалося зберегти: {e}"
-        return f"Збережено: {path}"
+            self._set_status(f"Не вдалося зберегти: {e}")
+            return
+        self._set_status(f"Збережено: {path}")
 
-    @Slot(QUrl, result=str)
-    def loadFromFile(self, url: QUrl) -> str:
+    @Slot(QUrl)
+    def loadFromFile(self, url: QUrl):
         path = url.toLocalFile()
         try:
             with open(path, encoding="utf-8") as f:
                 text = f.read()
         except OSError as e:
-            return f"Не вдалося відкрити: {e}"
+            self._set_status(f"Не вдалося відкрити: {e}")
+            return
 
         try:
             # сховище мутується лише після успішного розбору всього файла
             new_store = storage.graph_from_json(text)
         except (ValueError, KeyError, TypeError) as e:
-            return f"Не вдалося прочитати граф: {e}"
+            self._set_status(f"Не вдалося прочитати граф: {e}")
+            return
 
         self._store.adopt(new_store)
         self._model.reset_with(self._store.nodes)   # чистить і виділення
@@ -746,8 +803,9 @@ class GraphBackend(QObject):
         self.classesChanged.emit()
         self.graphChanged.emit()
         self._summary_now()
-        return (f"Відкрито: {path}  (вершин: {len(self._store.nodes)}, "
-                f"ребер: {self._store.edge_count()})")
+        self._set_status(
+            f"Відкрито: {path}  (вершин: {len(self._store.nodes)}, "
+            f"ребер: {self._store.edge_count()})")
 
 
 class EdgeLayer(QQuickPaintedItem):

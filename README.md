@@ -29,8 +29,6 @@
 | `edges.py` | Родина ребер: поля лише ребер — `EdgeStyle` (товщина, штрих), `EdgeClass` (напрямленість), `Edge` |
 | `storage.py` | Серіалізація сховища у JSON і назад — єдине місце, що знає про файли |
 | `qml/` | Інтерфейс: головне вікно, вершина, панель класів, контекстні меню вершини та ребра, тема |
-| `stress_test.py` | Стрес-тест бекенда: 1000 вершин зі степенями 1 / 10 / 100 |
-| `test_schema.py` | Тести схеми елементів і серіалізації: крайні випадки стилів, класів, storage |
 
 ## Вимоги
 
@@ -53,13 +51,6 @@ uv run main.py
 python -m venv .venv && source .venv/bin/activate
 pip install pyside6 networkx pydantic
 python main.py
-```
-
-### Тести
-
-```bash
-uv run pytest                    # схема елементів і серіалізація (test_schema.py)
-uv run python stress_test.py     # стрес-тест бекенда й малювання
 ```
 
 ## Плани

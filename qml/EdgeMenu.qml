@@ -18,17 +18,32 @@ Popup {
 
     readonly property var classNames: classes.map(function (c) { return c.name })
 
-    signal linePicked(string line)
-    signal widthPicked(real width)
-    signal colorPicked(string color)
-    signal classPicked(string name)
-    signal reverseRequested()
-    signal removeRequested()
+    // Перечитати ребро з бекенда: після кожної зміни меню показує те, що
+    // справді сталося. Ребра вже нема — закриває меню й повертає false.
+    function refresh() {
+        var info = backend.edgeInfo(currentClass, targetA, targetB)
+        if (!info.klass) {
+            close()
+            return false
+        }
+        targetLabel = info.label
+        currentLine = info.line
+        currentWidth = info.width
+        currentColor = String(info.color)
+        currentClass = info.klass
+        currentDirected = info.directed === true
+        classCombo.currentIndex = classNames.indexOf(currentClass)
+        return true
+    }
 
-    onOpened: classCombo.currentIndex = classNames.indexOf(currentClass)
+    onClosed: {
+        targetA = -1
+        targetB = -1
+    }
 
     padding: 0
-    modal: false
+    modal: true
+    dim: false
     focus: true
     closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
 
@@ -92,7 +107,11 @@ Popup {
                             anchors.fill: parent
                             hoverEnabled: true
                             cursorShape: Qt.PointingHandCursor
-                            onClicked: menu.linePicked(parent.modelData.key)
+                            onClicked: {
+                                backend.setEdgeLine(menu.currentClass, menu.targetA,
+                                                    menu.targetB, parent.modelData.key)
+                                menu.refresh()
+                            }
                         }
                     }
                 }
@@ -128,7 +147,11 @@ Popup {
                             anchors.fill: parent
                             hoverEnabled: true
                             cursorShape: Qt.PointingHandCursor
-                            onClicked: menu.widthPicked(parent.modelData)
+                            onClicked: {
+                                backend.setEdgeWidth(menu.currentClass, menu.targetA,
+                                                     menu.targetB, parent.modelData)
+                                menu.refresh()
+                            }
                         }
                     }
                 }
@@ -156,7 +179,11 @@ Popup {
                             anchors.fill: parent
                             hoverEnabled: true
                             cursorShape: Qt.PointingHandCursor
-                            onClicked: menu.colorPicked(parent.modelData)
+                            onClicked: {
+                                backend.setEdgeColor(menu.currentClass, menu.targetA,
+                                                     menu.targetB, parent.modelData)
+                                menu.refresh()
+                            }
                         }
                     }
                 }
@@ -164,29 +191,41 @@ Popup {
 
             Label { text: "Клас"; color: Theme.mutedText; font.pixelSize: 12 }
 
-            ComboBox {
+            DropDown {
                 id: classCombo
                 Layout.fillWidth: true
                 model: menu.classNames
                 onActivated: function (index) {
-                    menu.classPicked(textAt(index))
+                    var name = textAt(index)
+                    if (backend.setEdgeClass(menu.currentClass, menu.targetA,
+                                             menu.targetB, name))
+                        menu.currentClass = name
+                    menu.refresh()   // і відкочує комбобокс, якщо не вийшло
                 }
             }
 
-            Button {
+            FlatButton {
                 visible: menu.currentDirected
                 text: "⇄ Перевернути напрям"
                 Layout.fillWidth: true
-                onClicked: menu.reverseRequested()
+                onClicked: {
+                    backend.reverseEdge(menu.currentClass, menu.targetA,
+                                        menu.targetB)
+                    menu.refresh()
+                }
             }
 
             Rectangle { Layout.fillWidth: true; height: 1; color: Theme.popupBorder }
 
-            Button {
+            FlatButton {
                 text: "🗑 Видалити ребро"
                 Layout.fillWidth: true
-                palette.buttonText: Theme.error
-                onClicked: menu.removeRequested()
+                textColor: Theme.error
+                onClicked: {
+                    backend.removeEdge(menu.currentClass, menu.targetA,
+                                       menu.targetB)
+                    menu.close()
+                }
             }
         }
     }

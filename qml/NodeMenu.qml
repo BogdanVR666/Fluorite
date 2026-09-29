@@ -26,19 +26,31 @@ Popup {
 
     readonly property var classNames: classes.map(function (c) { return c.name })
 
-    signal labelEdited(string text)
-    signal descriptionEdited(string text)
-    signal shapePicked(string shape)
-    signal colorPicked(string color)
-    signal opacityPicked(real opacity)
-    signal classPicked(string name)
-    signal connectToClassRequested(string name)
-    signal connectSelectedRequested()
-    signal groupSelectedRequested()
-    signal collapseGroupRequested()
-    signal expandGroupRequested()
-    signal ungroupRequested()
-    signal removeRequested()
+    property string edgeClass: ""      // клас ребер для «З'єднати…»
+
+    // Перечитати вершину з бекенда: після кожної зміни меню показує те, що
+    // справді сталося. Вершини вже нема — закриває меню й повертає false.
+    // Текстові поля не чіпає, щоб не збивати курсор посеред вводу.
+    function refresh() {
+        var info = backend.nodeInfo(targetId)
+        if (!info.klass) {
+            close()
+            return false
+        }
+        targetLabel = info.label
+        currentDescription = info.description
+        currentShape = info.shape
+        currentColor = String(info.color)
+        currentOpacity = info.opacity
+        currentClass = info.klass
+        groupId = info.groupId
+        groupLabel = info.groupLabel
+        isGroup = info.isGroup === true
+        ownGroupId = info.ownGroupId
+        memberCount = info.memberCount
+        classCombo.currentIndex = classNames.indexOf(currentClass)
+        return true
+    }
 
     property bool syncing: false
 
@@ -47,23 +59,23 @@ Popup {
         labelField.text = targetLabel
         descArea.text = currentDescription
         opacitySlider.value = currentOpacity
-        classCombo.currentIndex = classNames.indexOf(currentClass)
         connectCombo.currentIndex = -1
         syncing = false
     }
 
+    onClosed: targetId = -1
+
     onCurrentOpacityChanged: opacitySlider.value = currentOpacity
 
     padding: 0
-    modal: false
+    modal: true
+    dim: false
     focus: true
     closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
 
     readonly property var shapeDefs: [
         { key: "circle",   glyph: "\u25CF" },  // ●
-        { key: "square",   glyph: "\u25A0" },  // ■
-        { key: "diamond",  glyph: "\u25C6" },  // ◆
-        { key: "triangle", glyph: "\u25B2" }   // ▲
+        { key: "square",   glyph: "\u25A0" }  // ■
     ]
     readonly property var colorPalette: Theme.nodePalette
 
@@ -94,18 +106,24 @@ Popup {
                 font.pixelSize: 14
             }
 
-            Button {
+            FlatButton {
                 visible: menu.isGroup && !menu.group
                 text: "Розгорнути групу"
                 Layout.fillWidth: true
-                onClicked: menu.expandGroupRequested()
+                onClicked: {
+                    backend.setGroupCollapsed(menu.ownGroupId, false)
+                    menu.close()
+                }
             }
 
-            Button {
+            FlatButton {
                 visible: menu.isGroup && !menu.group
                 text: "Розгрупувати"
                 Layout.fillWidth: true
-                onClicked: menu.ungroupRequested()
+                onClicked: {
+                    backend.ungroup(menu.ownGroupId)
+                    menu.close()
+                }
             }
 
             Label {
@@ -113,12 +131,15 @@ Popup {
                 text: "Текст"; color: Theme.mutedText; font.pixelSize: 12
             }
 
-            TextField {
+            LineField {
                 id: labelField
                 visible: !menu.group
                 Layout.fillWidth: true
                 placeholderText: "Підпис вершини"
-                onTextEdited: menu.labelEdited(text)
+                onTextEdited: {
+                    backend.setNodeLabel(menu.targetId, text)
+                    menu.refresh()
+                }
             }
 
             Label {
@@ -132,14 +153,15 @@ Popup {
                 Layout.preferredHeight: 56
                 clip: true
 
-                TextArea {
+                TextBox {
                     id: descArea
                     placeholderText: "Опис вершини…"
-                    wrapMode: TextArea.Wrap
                     font.pixelSize: 12
                     onTextChanged: {
-                        if (!menu.syncing)
-                            menu.descriptionEdited(text)
+                        if (menu.syncing)
+                            return
+                        backend.setNodeDescription(menu.targetId, text)
+                        menu.refresh()
                     }
                 }
             }
@@ -177,7 +199,10 @@ Popup {
                             anchors.fill: parent
                             hoverEnabled: true
                             cursorShape: Qt.PointingHandCursor
-                            onClicked: menu.shapePicked(parent.modelData.key)
+                            onClicked: {
+                                backend.setSelectionShape(parent.modelData.key)
+                                menu.refresh()
+                            }
                         }
                     }
                 }
@@ -205,7 +230,10 @@ Popup {
                             anchors.fill: parent
                             hoverEnabled: true
                             cursorShape: Qt.PointingHandCursor
-                            onClicked: menu.colorPicked(parent.modelData)
+                            onClicked: {
+                                backend.setSelectionColor(parent.modelData)
+                                menu.refresh()
+                            }
                         }
                     }
                 }
@@ -231,50 +259,64 @@ Popup {
                 Layout.fillWidth: true
                 from: 0.1
                 to: 1.0
-                onMoved: menu.opacityPicked(value)
+                onMoved: {
+                    backend.setSelectionOpacity(value)
+                    menu.refresh()
+                }
             }
 
             Label { text: "Клас"; color: Theme.mutedText; font.pixelSize: 12 }
 
-            ComboBox {
+            DropDown {
                 id: classCombo
                 Layout.fillWidth: true
                 model: menu.classNames
                 onActivated: function (index) {
-                    menu.classPicked(textAt(index))
+                    backend.setSelectionClass(textAt(index))
+                    menu.refresh()
                 }
             }
 
-            ComboBox {
+            DropDown {
                 id: connectCombo
                 Layout.fillWidth: true
                 displayText: "З'єднати з класом…"
                 model: menu.classNames
                 onActivated: function (index) {
-                    menu.connectToClassRequested(textAt(index))
+                    backend.connectSelectionToClass(textAt(index),
+                                                    menu.edgeClass)
                     menu.close()
                 }
             }
 
-            Button {
+            FlatButton {
                 visible: menu.group
                 text: "З'єднати виділені між собою"
                 Layout.fillWidth: true
-                onClicked: menu.connectSelectedRequested()
+                onClicked: {
+                    backend.connectSelection(menu.edgeClass)
+                    menu.close()
+                }
             }
 
-            Button {
+            FlatButton {
                 visible: menu.group
                 text: "Згорнути виділені у групу"
                 Layout.fillWidth: true
-                onClicked: menu.groupSelectedRequested()
+                onClicked: {
+                    backend.groupSelection()
+                    menu.close()
+                }
             }
 
-            Button {
+            FlatButton {
                 visible: menu.groupId !== -1
                 text: "Згорнути групу «" + menu.groupLabel + "»"
                 Layout.fillWidth: true
-                onClicked: menu.collapseGroupRequested()
+                onClicked: {
+                    backend.setGroupCollapsed(menu.groupId, true)
+                    menu.close()
+                }
             }
 
             Rectangle { 
@@ -283,12 +325,15 @@ Popup {
                 color: Theme.popupBorder 
             }
 
-            Button {
+            FlatButton {
                 text: menu.group ? "Видалити виділені (" + menu.selectionCount + ")"
                                  : "Видалити вершину"
                 Layout.fillWidth: true
-                palette.buttonText: Theme.error
-                onClicked: menu.removeRequested()
+                textColor: Theme.error
+                onClicked: {
+                    backend.removeSelection()
+                    menu.close()
+                }
             }
         }
     }

@@ -13,8 +13,6 @@ ApplicationWindow {
     title: "Fluorite"
     color: Theme.background
 
-    property string statusMsg: ""
-
     property var nodeClasses: []
     property var edgeClasses: []
     property string currentClass: "Звичайна"
@@ -49,11 +47,6 @@ ApplicationWindow {
     property real edgeDragX: 0
     property real edgeDragY: 0
 
-    function resetSelection() {
-        backend.clearSelection()
-        root.statusMsg = ""
-    }
-
     property point menuAnchor: Qt.point(0, 0)
 
     function menuX(w) {
@@ -70,35 +63,19 @@ ApplicationWindow {
     function openNodeMenu(id, px, py) {
         if (!backend.isSelected(id))
             backend.selectNode(id, false)
-        var info = backend.nodeInfo(id)
         nodeMenu.targetId = id
-        nodeMenu.targetLabel = info.label
-        nodeMenu.currentDescription = info.description
-        nodeMenu.currentShape = info.shape
-        nodeMenu.currentColor = String(info.color)
-        nodeMenu.currentOpacity = info.opacity
-        nodeMenu.currentClass = info.klass
-        nodeMenu.groupId = info.groupId
-        nodeMenu.groupLabel = info.groupLabel
-        nodeMenu.isGroup = info.isGroup === true
-        nodeMenu.ownGroupId = info.ownGroupId
-        nodeMenu.memberCount = info.memberCount
+        if (!nodeMenu.refresh())
+            return
         root.menuAnchor = Qt.point(px, py)
         nodeMenu.open()
     }
 
     function openEdgeMenu(klass, a, b, px, py) {
-        var info = backend.edgeInfo(klass, a, b)
-        if (!info.klass)
-            return
         edgeMenu.targetA = a
         edgeMenu.targetB = b
-        edgeMenu.targetLabel = info.label
-        edgeMenu.currentLine = info.line
-        edgeMenu.currentWidth = info.width
-        edgeMenu.currentColor = String(info.color)
-        edgeMenu.currentClass = info.klass
-        edgeMenu.currentDirected = info.directed === true
+        edgeMenu.currentClass = klass
+        if (!edgeMenu.refresh())
+            return
         root.menuAnchor = Qt.point(px, py)
         edgeMenu.open()
     }
@@ -108,45 +85,34 @@ ApplicationWindow {
         root.banding = false
         var r = root.bandRect
         if (wasBanding && (r.width >= 4 || r.height >= 4)) {
-            var hits = backend.selectInRect(r.x, r.y, r.width, r.height,
-                                            root.bandAdditive)
-            root.statusMsg = hits > 0
-                ? "Виділено вершин: " + backend.selectionCount
-                : "У рамку не потрапила жодна вершина"
+            backend.selectInRect(r.x, r.y, r.width, r.height,
+                                 root.bandAdditive)
             return
         }
         if (backend.selectionCount > 0
                 && (modifiers & Qt.ShiftModifier) === 0) {
             backend.clearSelection()
-            root.statusMsg = ""
             return
         }
         backend.addNode(mx, my, root.currentClass)
     }
 
     function handleNodeTap(id, modifiers) {
+        var chord = Qt.ControlModifier | Qt.ShiftModifier
+        if ((modifiers & chord) === chord) {
+            backend.connectSelectionTo(id, root.currentEdgeClass)
+            return
+        }
         backend.selectNode(id, (modifiers & Qt.ShiftModifier) !== 0)
-        root.statusMsg = backend.selectionCount > 1
-            ? "Виділено вершин: " + backend.selectionCount : ""
     }
 
     Shortcut {
         sequences: [StandardKey.Delete, "Backspace"]
-        onActivated: {
-            if (backend.selectionCount === 0)
-                return
-            var n = backend.selectionCount
-            backend.removeSelection()
-            root.resetSelection()          // скидає й statusMsg
-            root.statusMsg = "Видалено вершин: " + n
-        }
+        onActivated: backend.removeSelection()
     }
     Shortcut {
         sequence: "Escape"
-        onActivated: {
-            backend.clearSelection()
-            root.resetSelection()
-        }
+        onActivated: backend.clearSelection()
     }
 
     footer: ToolBar {
@@ -168,9 +134,7 @@ ApplicationWindow {
                 color: Theme.statusText
                 elide: Text.ElideRight
                 Layout.maximumWidth: 600
-                text: root.statusMsg !== ""
-                      ? root.statusMsg
-                      : "ЛКМ по полю — нова вершина, ЛКМ-перетяг — рамка виділення (Shift — додати до наявного); Shift+ЛКМ по вершині — виділити ще одну, Delete — видалити виділені; ПКМ по вершині чи ребру — меню, ПКМ-перетяг між вершинами — ребро"
+                text: backend.status
             }
         }
     }
@@ -183,6 +147,10 @@ ApplicationWindow {
         edgeClasses: root.edgeClasses
         currentNodeClass: root.currentClass
         currentEdgeClass: root.currentEdgeClass
+        keyboard: !nodeMenu.opened && !edgeMenu.opened
+                  && !(root.activeFocusItem instanceof TextInput)
+                  && !(root.activeFocusItem instanceof TextEdit)
+        arrows: backend.selectionCount === 0
 
         onClassPicked: function (family, name) {
             if (family === "node")
@@ -191,8 +159,7 @@ ApplicationWindow {
                 root.currentEdgeClass = name
         }
         onConnectClassRequested: function (name) {
-            root.statusMsg = backend.connectClassNodes(name,
-                                                       root.currentEdgeClass)
+            backend.connectClassNodes(name, root.currentEdgeClass)
         }
         onUpdateRequested: function (family, name, design) {
             backend.updateClass(family, name, design)
@@ -204,16 +171,11 @@ ApplicationWindow {
                 else
                     root.currentEdgeClass = name
                 classPanel.resetForm()
-            } else {
-                root.statusMsg = "Клас «" + name + "» вже існує"
             }
         }
         onSaveRequested: saveDialog.open()
         onOpenRequested: openDialog.open()
-        onClearRequested: {
-            backend.clear()
-            root.resetSelection()
-        }
+        onClearRequested: backend.clear()
     }
 
     FileDialog {
@@ -222,7 +184,7 @@ ApplicationWindow {
         fileMode: FileDialog.SaveFile
         nameFilters: ["Граф JSON (*.json)", "Усі файли (*)"]
         defaultSuffix: "json"
-        onAccepted: root.statusMsg = backend.saveToFile(selectedFile)
+        onAccepted: backend.saveToFile(selectedFile)
     }
 
     FileDialog {
@@ -230,10 +192,7 @@ ApplicationWindow {
         title: "Відкрити граф"
         fileMode: FileDialog.OpenFile
         nameFilters: ["Граф JSON (*.json)", "Усі файли (*)"]
-        onAccepted: {
-            root.resetSelection()
-            root.statusMsg = backend.loadFromFile(selectedFile)
-        }
+        onAccepted: backend.loadFromFile(selectedFile)
     }
 
     Item {
@@ -246,6 +205,7 @@ ApplicationWindow {
             acceptedButtons: Qt.LeftButton | Qt.RightButton
 
             onPressed: function (mouse) {
+                workspace.forceActiveFocus()   // завершує редагування підпису
                 if (mouse.button === Qt.LeftButton) {
                     root.bandAdditive =
                         (mouse.modifiers & Qt.ShiftModifier) !== 0
@@ -293,8 +253,7 @@ ApplicationWindow {
                 root.edgeSourceId = -1
                 var tgt = backend.nodeAt(mouse.x, mouse.y)
                 if (tgt !== -1 && tgt !== src) {
-                    if (!backend.addEdge(src, tgt, root.currentEdgeClass))
-                        root.statusMsg = "Таке ребро вже існує"
+                    backend.addEdge(src, tgt, root.currentEdgeClass)
                 } else if (tgt === src) {
                     root.openNodeMenu(src, mouse.x, mouse.y)
                 }
@@ -360,81 +319,7 @@ ApplicationWindow {
             y: root.menuY(height)
 
             selectionCount: backend.selectionCount
-
-            onClassPicked: function (name) {
-                if (targetId === -1)
-                    return
-                backend.setSelectionClass(name)
-                currentClass = name
-                var info = backend.nodeInfo(targetId)
-                currentShape = info.shape
-                currentColor = String(info.color)
-                currentOpacity = info.opacity
-            }
-            onLabelEdited: function (text) {
-                if (targetId === -1)
-                    return
-                backend.setNodeLabel(targetId, text)
-                targetLabel = text
-            }
-            onDescriptionEdited: function (text) {
-                if (targetId === -1)
-                    return
-                backend.setNodeDescription(targetId, text)
-                currentDescription = text
-            }
-            onOpacityPicked: function (opacity) {
-                if (targetId === -1)
-                    return
-                backend.setSelectionOpacity(opacity)
-                currentOpacity = opacity
-            }
-            onConnectToClassRequested: function (name) {
-                if (targetId !== -1)
-                    root.statusMsg = backend.connectSelectionToClass(
-                        name, root.currentEdgeClass)
-            }
-            onConnectSelectedRequested: {
-                root.statusMsg = backend.connectSelection(root.currentEdgeClass)
-                close()
-            }
-            onGroupSelectedRequested: {
-                root.statusMsg = backend.groupSelection()
-                close()
-            }
-            onCollapseGroupRequested: {
-                backend.setGroupCollapsed(groupId, true)
-                close()
-            }
-            onExpandGroupRequested: {
-                if (ownGroupId !== -1)
-                    backend.setGroupCollapsed(ownGroupId, false)
-                close()
-            }
-            onUngroupRequested: {
-                if (ownGroupId !== -1)
-                    backend.ungroup(ownGroupId)
-                close()
-            }
-            onShapePicked: function (shape) {
-                if (targetId === -1)
-                    return
-                backend.setSelectionShape(shape)
-                currentShape = shape
-            }
-            onColorPicked: function (color) {
-                if (targetId === -1)
-                    return
-                backend.setSelectionColor(color)
-                currentColor = color
-            }
-            onRemoveRequested: {
-                var n = backend.selectionCount
-                backend.removeSelection()
-                root.resetSelection()      // скидає й statusMsg
-                root.statusMsg = "Видалено вершин: " + n
-                close()
-            }
+            edgeClass: root.currentEdgeClass
         }
 
         EdgeMenu {
@@ -443,54 +328,6 @@ ApplicationWindow {
 
             x: root.menuX(width)
             y: root.menuY(height)
-
-            onLinePicked: function (line) {
-                if (targetA === -1)
-                    return
-                backend.setEdgeLine(currentClass, targetA, targetB, line)
-                currentLine = line
-            }
-            onWidthPicked: function (width) {
-                if (targetA === -1)
-                    return
-                backend.setEdgeWidth(currentClass, targetA, targetB, width)
-                currentWidth = width
-            }
-            onColorPicked: function (color) {
-                if (targetA === -1)
-                    return
-                backend.setEdgeColor(currentClass, targetA, targetB, color)
-                currentColor = color
-            }
-            onClassPicked: function (name) {
-                if (targetA === -1)
-                    return
-                if (!backend.setEdgeClass(currentClass, targetA, targetB,
-                                          name)) {
-                    root.statusMsg = "Ребро класу «" + name
-                        + "» між цими вершинами вже існує"
-                    return
-                }
-                currentClass = name
-                var info = backend.edgeInfo(name, targetA, targetB)
-                currentLine = info.line
-                currentWidth = info.width
-                currentColor = String(info.color)
-                currentDirected = info.directed === true
-                targetLabel = info.label
-            }
-            onReverseRequested: {
-                if (targetA === -1)
-                    return
-                backend.reverseEdge(currentClass, targetA, targetB)
-                targetLabel = backend.edgeInfo(currentClass,
-                                               targetA, targetB).label
-            }
-            onRemoveRequested: {
-                if (targetA !== -1)
-                    backend.removeEdge(currentClass, targetA, targetB)
-                close()
-            }
         }
     }
 }

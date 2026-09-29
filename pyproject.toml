@@ -10,11 +10,3 @@ dependencies = [
     "pyside6>=6.11.1",
 ]
 
-[dependency-groups]
-dev = [
-    "pytest>=9.1.1",
-]
-
-[tool.pytest.ini_options]
-# лише test_*.py: stress_test.py — не pytest, а окремий сценарій
-python_files = ["test_*.py"]

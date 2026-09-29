@@ -2,3 +2,7 @@ Node 1.0 Node.qml
 NodeMenu 1.0 NodeMenu.qml
 ClassPanel 1.0 ClassPanel.qml
 singleton Theme 1.0 Theme.qml
+LineField 1.0 LineField.qml
+TextBox 1.0 TextBox.qml
+FlatButton 1.0 FlatButton.qml
+DropDown 1.0 DropDown.qml
