@@ -1,5 +1,6 @@
 import QtQuick
 import QtQuick.Controls
+import QtQuick.Dialogs
 import QtQuick.Layouts
 
 Rectangle {
@@ -7,8 +8,8 @@ Rectangle {
 
     property var nodeClasses: []       // [{name, count, shape, color, opacity}]
     property var edgeClasses: []       // [{name, count, color, width, line, directed}]
-    property string currentNodeClass: ""   // клас для НОВИХ вершин
-    property string currentEdgeClass: ""   // клас для НОВИХ ребер
+    property string currentNodeClass: "Звичайна"   // клас для НОВИХ вершин
+    property string currentEdgeClass: "Звичайне"   // клас для НОВИХ ребер
 
     property string family: "node"
     readonly property bool nodesShown: family === "node"
@@ -18,16 +19,12 @@ Rectangle {
 
     readonly property bool editing: currentClass !== ""
 
-    signal classPicked(string family, string name)
-    signal connectClassRequested(string name)
-    signal createRequested(string family, string name, var design)
-    signal updateRequested(string family, string name, var design)
-    signal saveRequested()
-    signal openRequested()
-    signal clearRequested()
-
-    function resetForm() {
-        nameField.text = ""
+    // Зробити name поточним класом показаної сім'ї ("" — жодного).
+    function pick(name) {
+        if (nodesShown)
+            currentNodeClass = name
+        else
+            currentEdgeClass = name
     }
 
     function toggleFamily() {
@@ -53,9 +50,127 @@ Rectangle {
     }
     function pickAt(i) {
         var names = classes.map(function (c) { return c.name })
-        classPicked(family, i < names.length ? names[i] : "")
+        pick(i < names.length ? names[i] : "")
         if (i < names.length)
             classList.positionViewAtIndex(i, ListView.Contain)
+    }
+
+    function indexOfClass(name) {
+        for (var i = 0; i < classes.length; i++)
+            if (classes[i].name === name)
+                return i
+        return -1
+    }
+    readonly property string defaultClass: {
+        for (var i = 0; i < classes.length; i++)
+            if (classes[i].default === true)
+                return classes[i].name
+        return ""
+    }
+
+    // Обраний клас на delta позицій вище (-) чи нижче (+).
+    function moveCurrent(delta) {
+        var i = indexOfClass(currentClass)
+        var to = Math.max(0, Math.min(classes.length - 1, i + delta))
+        if (i === -1 || to === i)
+            return
+        backend.moveClass(family, currentClass, to)
+        classList.positionViewAtIndex(to, ListView.Contain)
+    }
+
+    // Backspace: видалити клас разом з елементами, спитавши підтвердження.
+    // Стандартний клас бекенд не видалить і пояснить чому в статусі.
+    function removeClass(name) {
+        var cls = classes[indexOfClass(name)]
+        if (!cls)
+            return
+        if (cls.default === true) {
+            backend.removeClass(family, name)
+            return
+        }
+        removeDialog.family = family
+        removeDialog.name = name
+        removeDialog.count = cls.count
+        removeDialog.ask()
+    }
+
+    FileDialog {
+        id: saveDialog
+        title: "Зберегти граф"
+        fileMode: FileDialog.SaveFile
+        nameFilters: ["Граф JSON (*.json)", "Усі файли (*)"]
+        defaultSuffix: "json"
+        onAccepted: backend.saveToFile(selectedFile)
+    }
+
+    FileDialog {
+        id: openDialog
+        title: "Відкрити граф"
+        fileMode: FileDialog.OpenFile
+        nameFilters: ["Граф JSON (*.json)", "Усі файли (*)"]
+        onAccepted: backend.loadFromFile(selectedFile)
+    }
+
+    ConfirmDialog {
+        id: removeDialog
+        property string family
+        property string name
+        property int count
+
+        key: "removeClass"
+        title: "Видалити клас «" + name + "»?"
+        text: count === 0 ? "Клас порожній."
+            : (family === "node" ? "Разом із ним буде видалено вершин: "
+                                 : "Разом із ним буде видалено ребер: ")
+              + count + "."
+        onConfirmed: {
+            backend.removeClass(family, name)
+            if (family === "node" && panel.currentNodeClass === name)
+                panel.currentNodeClass = ""
+            else if (family === "edge" && panel.currentEdgeClass === name)
+                panel.currentEdgeClass = ""
+        }
+    }
+
+    // Перейменування рядка на місці: ім'я класу, що редагується, або "".
+    property string renaming: ""
+    function finishRename(newName) {
+        var old = renaming
+        renaming = ""
+        newName = newName.trim()
+        if (old === "" || newName === "" || newName === old
+                || !backend.renameClass(family, old, newName))
+            return
+        if (currentClass === old)
+            pick(newName)
+    }
+    onFamilyChanged: renaming = ""
+
+    // Перетягування за ручку: рядок dragIndex зсунуто на dragOffset px,
+    // решта розступається навколо dropIndex.
+    property int dragIndex: -1
+    property real dragOffset: 0
+    readonly property real rowStep: 36 + classList.spacing
+    readonly property int dropIndex: dragIndex === -1 ? -1
+        : Math.max(0, Math.min(classes.length - 1,
+                               dragIndex + Math.round(dragOffset / rowStep)))
+    function rowShift(i) {
+        if (dragIndex === -1)
+            return 0
+        if (i === dragIndex)
+            return dragOffset
+        if (i > dragIndex && i <= dropIndex)
+            return -rowStep
+        if (i < dragIndex && i >= dropIndex)
+            return rowStep
+        return 0
+    }
+    function finishDrag() {
+        var from = dragIndex, to = dropIndex
+        dragIndex = -1
+        dragOffset = 0
+        if (from !== -1 && to !== from)
+            backend.moveClass(family, classes[from].name, to)
     }
 
     function cycle(list, value, delta) {
@@ -86,10 +201,18 @@ Rectangle {
             nameField.forceActiveFocus()
             return
         }
-        createRequested(family, name, nodesShown
+        if (!backend.createClass(family, name, design()))
+            return
+        pick(name)
+        nameField.text = ""
+    }
+
+    // Стиль із форми — для нового класу чи обраного.
+    function design() {
+        return nodesShown
             ? { shape: newShape, color: newColor, opacity: newOpacity }
             : { color: newColor, width: newWidth, line: newLine,
-                directed: newDirected })
+                directed: newDirected }
     }
 
     // Клавіатура панелі. keyboard — чи можна взагалі (нема меню й вводу),
@@ -116,6 +239,21 @@ Rectangle {
         sequence: "Down"
         enabled: panel.keyboard && panel.arrows
         onActivated: panel.stepClass(1)
+    }
+    Shortcut {
+        sequence: "Alt+Up"
+        enabled: panel.keyboard && panel.arrows && panel.editing
+        onActivated: panel.moveCurrent(-1)
+    }
+    Shortcut {
+        sequence: "Alt+Down"
+        enabled: panel.keyboard && panel.arrows && panel.editing
+        onActivated: panel.moveCurrent(1)
+    }
+    Shortcut {
+        sequence: "Backspace"
+        enabled: panel.keyboard && panel.arrows && panel.editing
+        onActivated: panel.removeClass(panel.currentClass)
     }
     // ←/→ колір; Shift — форма чи лінія; Ctrl — товщина; Ctrl+Shift — напрям
     Shortcut {
@@ -177,10 +315,7 @@ Rectangle {
     function pushDesign() {
         if (!editing)
             return
-        updateRequested(family, currentClass, nodesShown
-            ? { shape: newShape, color: newColor, opacity: newOpacity }
-            : { color: newColor, width: newWidth, line: newLine,
-                directed: newDirected })
+        backend.updateClass(family, currentClass, design())
     }
 
     onCurrentClassChanged: loadDesign()
@@ -229,7 +364,7 @@ Rectangle {
 
     MouseArea {
         anchors.fill: parent
-        onClicked: panel.classPicked(panel.family, "")
+        onClicked: panel.pick("")
     }
 
     ColumnLayout {
@@ -286,56 +421,173 @@ Rectangle {
             clip: true
             spacing: 4
             model: panel.classes
+            interactive: panel.dragIndex === -1
 
             TapHandler {
-                onTapped: panel.classPicked(panel.family, "")
+                onTapped: panel.pick("")
             }
 
-            delegate: Rectangle {
+            delegate: Item {
+                id: slot
                 required property var modelData
+                required property int index
+                readonly property bool dragged: panel.dragIndex === index
+                readonly property bool renamingThis:
+                    panel.renaming === modelData.name
+
                 width: classList.width
                 height: 36
-                radius: 8
-                color: panel.currentClass === modelData.name
-                       ? Theme.accent
-                       : rowHover.containsMouse ? Theme.hover : "transparent"
-                Behavior on color { ColorAnimation { duration: 100 } }
+                z: dragged ? 1 : 0
 
-                RowLayout {
-                    anchors.fill: parent
-                    anchors.leftMargin: 10
-                    anchors.rightMargin: 10
-                    spacing: 8
+                Rectangle {
+                    id: row
+                    width: parent.width
+                    height: parent.height
+                    y: panel.rowShift(slot.index)
+                    Behavior on y {
+                        enabled: !slot.dragged
+                        NumberAnimation { duration: 120; easing.type: Easing.OutQuad }
+                    }
+                    radius: 8
+                    color: panel.currentClass === slot.modelData.name
+                           ? Theme.accent
+                           : slot.dragged || rowHover.containsMouse
+                             ? Theme.hover : "transparent"
+                    border.width: slot.dragged ? 1 : 0
+                    border.color: Theme.border
+                    Behavior on color { ColorAnimation { duration: 100 } }
 
-                    Text {
-                        text: panel.classGlyph(modelData)
-                        color: modelData.color
-                        opacity: panel.nodesShown ? modelData.opacity : 1
-                        font.pixelSize: panel.nodesShown ? 18 : 14
-                        font.bold: !panel.nodesShown && modelData.width >= 4
+                    MouseArea {
+                        id: rowHover
+                        anchors.fill: parent
+                        hoverEnabled: true
+                        cursorShape: Qt.PointingHandCursor
+                        onClicked: panel.pick(
+                            panel.currentClass === slot.modelData.name
+                                ? "" : slot.modelData.name)
+                        onDoubleClicked: {
+                            panel.pick(slot.modelData.name)
+                            panel.renaming = slot.modelData.name
+                        }
                     }
-                    Label {
-                        text: modelData.name
-                        color: Theme.foreground
-                        elide: Text.ElideRight
-                        Layout.fillWidth: true
-                    }
-                    Label {
-                        text: modelData.count
-                        color: Theme.mutedText
-                        font.pixelSize: 11
-                    }
-                }
 
-                MouseArea {
-                    id: rowHover
-                    anchors.fill: parent
-                    hoverEnabled: true
-                    cursorShape: Qt.PointingHandCursor
-                    onClicked: panel.classPicked(
-                        panel.family,
-                        panel.currentClass === parent.modelData.name
-                            ? "" : parent.modelData.name)
+                    RowLayout {
+                        anchors.fill: parent
+                        anchors.leftMargin: 2
+                        anchors.rightMargin: 10
+                        spacing: 6
+
+                        Text {   // ручка перетягування
+                            text: "⋮⋮"
+                            color: grip.containsMouse || slot.dragged
+                                   ? Theme.foreground
+                                   : panel.currentClass === slot.modelData.name
+                                     ? Qt.alpha(Theme.foreground, 0.6)
+                                     : Theme.faintText
+                            font.pixelSize: 12
+                            Layout.preferredWidth: 14
+                            horizontalAlignment: Text.AlignHCenter
+
+                            MouseArea {
+                                id: grip
+                                anchors.fill: parent
+                                anchors.margins: -4
+                                hoverEnabled: true
+                                preventStealing: true
+                                cursorShape: slot.dragged ? Qt.ClosedHandCursor
+                                                          : Qt.OpenHandCursor
+                                property real pressY: 0
+                                onPressed: function (mouse) {
+                                    pressY = mapToItem(classList, 0, mouse.y).y
+                                    panel.dragIndex = slot.index
+                                }
+                                onPositionChanged: function (mouse) {
+                                    if (slot.dragged)
+                                        panel.dragOffset =
+                                            mapToItem(classList, 0, mouse.y).y
+                                            - pressY
+                                }
+                                onReleased: panel.finishDrag()
+                                onCanceled: {
+                                    panel.dragIndex = -1
+                                    panel.dragOffset = 0
+                                }
+                            }
+                        }
+                        Text {
+                            text: panel.classGlyph(slot.modelData)
+                            color: slot.modelData.color
+                            opacity: (panel.nodesShown ? slot.modelData.opacity : 1)
+                                     * (slot.modelData.hidden ? 0.4 : 1)
+                            font.pixelSize: panel.nodesShown ? 18 : 14
+                            font.bold: !panel.nodesShown && slot.modelData.width >= 4
+                        }
+                        Label {
+                            visible: !slot.renamingThis
+                            text: slot.modelData.name
+                            color: Theme.foreground
+                            opacity: slot.modelData.hidden ? 0.5 : 1
+                            elide: Text.ElideRight
+                            Layout.fillWidth: true
+                        }
+                        LineField {
+                            id: renameField
+                            visible: slot.renamingThis
+                            Layout.fillWidth: true
+                            // Enter або клік деінде — зберегти, Escape — скасувати
+                            onVisibleChanged: if (visible) {
+                                text = slot.modelData.name
+                                selectAll()
+                                forceActiveFocus()
+                            }
+                            // зберігає onActiveFocusChanged: після нього
+                            // список перебудується і цього рядка вже не буде
+                            onAccepted: panel.forceActiveFocus()
+                            onActiveFocusChanged:
+                                if (!activeFocus && slot.renamingThis)
+                                    panel.finishRename(text)
+                            Keys.onShortcutOverride: function (event) {
+                                event.accepted = event.key === Qt.Key_Escape
+                            }
+                            Keys.onEscapePressed: {
+                                panel.renaming = ""
+                                panel.forceActiveFocus()
+                            }
+                        }
+                        Label {
+                            text: slot.modelData.count
+                            color: Theme.mutedText
+                            font.pixelSize: 11
+                        }
+                        Text {   // око: показати / сховати елементи класу
+                            text: "👁"
+                            font.pixelSize: 13
+                            color: Theme.foreground
+                            opacity: slot.modelData.hidden ? 0.25
+                                   : eye.containsMouse ? 1 : 0.6
+                            Layout.preferredWidth: 16
+                            horizontalAlignment: Text.AlignHCenter
+
+                            Rectangle {   // закреслення, поки клас схований
+                                visible: slot.modelData.hidden
+                                anchors.centerIn: parent
+                                width: parent.width + 2
+                                height: 1.5
+                                rotation: -35
+                                color: Theme.foreground
+                            }
+                            MouseArea {
+                                id: eye
+                                anchors.fill: parent
+                                anchors.margins: -4
+                                hoverEnabled: true
+                                cursorShape: Qt.PointingHandCursor
+                                onClicked: backend.setClassHidden(
+                                    panel.family, slot.modelData.name,
+                                    !slot.modelData.hidden)
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -345,7 +597,8 @@ Rectangle {
             visible: panel.nodesShown
             enabled: panel.currentNodeClass !== ""
             Layout.fillWidth: true
-            onClicked: panel.connectClassRequested(panel.currentNodeClass)
+            onClicked: backend.connectClassNodes(panel.currentNodeClass,
+                                                 panel.currentEdgeClass)
         }
 
         Rectangle { Layout.fillWidth: true; height: 1; color: Theme.border }
@@ -610,9 +863,10 @@ Rectangle {
                   ? (panel.nodesShown
                      ? "Нові вершини отримують цей клас; зміни стилю застосовуються до всіх його вершин. Повторний клік по класу — зняти вибір"
                      : "Нові ребра отримують цей клас; зміни стилю застосовуються до всіх його ребер. Повторний клік по класу — зняти вибір")
+                    + ". Подвійний клік — перейменувати, ⋮⋮ чи Alt+↑/↓ — перемістити, Backspace — видалити"
                   : (panel.nodesShown
-                     ? "Клас не обрано: нові вершини — «Звичайна». Форма створює новий клас"
-                     : "Клас не обрано: нові ребра — «Звичайне». Форма створює новий клас")
+                     ? "Клас не обрано: нові вершини — «" + panel.defaultClass + "». Форма створює новий клас"
+                     : "Клас не обрано: нові ребра — «" + panel.defaultClass + "». Форма створює новий клас")
         }
 
         RowLayout {
@@ -621,19 +875,19 @@ Rectangle {
                 text: "💾"
                 Layout.fillWidth: true
                 Layout.fillHeight: true
-                onClicked: panel.saveRequested()
+                onClicked: saveDialog.open()
             }
             FlatButton {
                 text: "📂"
                 Layout.fillWidth: true
                 Layout.fillHeight: true
-                onClicked: panel.openRequested()
+                onClicked: openDialog.open()
             }
             FlatButton {
                 text: "🗑"
                 Layout.fillWidth: true
                 Layout.fillHeight: true
-                onClicked: panel.clearRequested()
+                onClicked: backend.clear()
             }
 
         }

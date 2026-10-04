@@ -6,8 +6,7 @@ import QtQuick.Layouts
 Popup {
     id: menu
 
-    property int targetA: -1           // кінці ребра, яке редагуємо
-    property int targetB: -1
+    property int edgeId: -1            // ребро, яке редагуємо
     property string targetLabel: ""
     property string currentLine: "solid"
     property real currentWidth: 2.5
@@ -21,7 +20,7 @@ Popup {
     // Перечитати ребро з бекенда: після кожної зміни меню показує те, що
     // справді сталося. Ребра вже нема — закриває меню й повертає false.
     function refresh() {
-        var info = backend.edgeInfo(currentClass, targetA, targetB)
+        var info = backend.edgeInfo(edgeId)
         if (!info.klass) {
             close()
             return false
@@ -36,10 +35,7 @@ Popup {
         return true
     }
 
-    onClosed: {
-        targetA = -1
-        targetB = -1
-    }
+    onClosed: edgeId = -1
 
     padding: 0
     modal: true
@@ -108,8 +104,7 @@ Popup {
                             hoverEnabled: true
                             cursorShape: Qt.PointingHandCursor
                             onClicked: {
-                                backend.setEdgeLine(menu.currentClass, menu.targetA,
-                                                    menu.targetB, parent.modelData.key)
+                                backend.setEdgeLine(menu.edgeId, parent.modelData.key)
                                 menu.refresh()
                             }
                         }
@@ -148,8 +143,7 @@ Popup {
                             hoverEnabled: true
                             cursorShape: Qt.PointingHandCursor
                             onClicked: {
-                                backend.setEdgeWidth(menu.currentClass, menu.targetA,
-                                                     menu.targetB, parent.modelData)
+                                backend.setEdgeWidth(menu.edgeId, parent.modelData)
                                 menu.refresh()
                             }
                         }
@@ -180,8 +174,7 @@ Popup {
                             hoverEnabled: true
                             cursorShape: Qt.PointingHandCursor
                             onClicked: {
-                                backend.setEdgeColor(menu.currentClass, menu.targetA,
-                                                     menu.targetB, parent.modelData)
+                                backend.setEdgeColor(menu.edgeId, parent.modelData)
                                 menu.refresh()
                             }
                         }
@@ -196,10 +189,7 @@ Popup {
                 Layout.fillWidth: true
                 model: menu.classNames
                 onActivated: function (index) {
-                    var name = textAt(index)
-                    if (backend.setEdgeClass(menu.currentClass, menu.targetA,
-                                             menu.targetB, name))
-                        menu.currentClass = name
+                    backend.setEdgeClass(menu.edgeId, textAt(index))
                     menu.refresh()   // і відкочує комбобокс, якщо не вийшло
                 }
             }
@@ -209,8 +199,7 @@ Popup {
                 text: "⇄ Перевернути напрям"
                 Layout.fillWidth: true
                 onClicked: {
-                    backend.reverseEdge(menu.currentClass, menu.targetA,
-                                        menu.targetB)
+                    backend.reverseEdge(menu.edgeId)
                     menu.refresh()
                 }
             }
@@ -222,8 +211,7 @@ Popup {
                 Layout.fillWidth: true
                 textColor: Theme.error
                 onClicked: {
-                    backend.removeEdge(menu.currentClass, menu.targetA,
-                                       menu.targetB)
+                    backend.removeEdge(menu.edgeId)
                     menu.close()
                 }
             }

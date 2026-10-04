@@ -19,8 +19,25 @@ Item {
     required property bool isGroup        // метавершина групи
     required property int memberCount     // вершин у її групі
 
-    signal tapped(int modifiers)
-    signal moved(real cx, real cy)     // нові координати центру
+    property string edgeClass      // клас ребер для Ctrl+Shift+клік
+
+    // Shift — додати до виділення чи прибрати з нього;
+    // Ctrl+Shift — з'єднати виділені з цією вершиною.
+    function tap(modifiers) {
+        var chord = Qt.ControlModifier | Qt.ShiftModifier
+        if ((modifiers & chord) === chord)
+            backend.connectSelectionTo(nodeId, edgeClass)
+        else
+            backend.selectNode(nodeId, (modifiers & Qt.ShiftModifier) !== 0)
+    }
+
+    // Тягнуть виділену разом з іншими — їдуть усі виділені.
+    function moveTo(cx, cy) {
+        if (nodeSelected && backend.selectionCount > 1)
+            backend.moveSelectionTo(nodeId, cx, cy)
+        else
+            backend.moveNode(nodeId, cx, cy)
+    }
 
     property bool editing: false   // підпис редагується на місці
 
@@ -236,13 +253,13 @@ Item {
 
         // MouseArea сама фокус не бере, а поле вводу має його втратити
         onPressed: node.forceActiveFocus()
-        onClicked: function (mouse) { node.tapped(mouse.modifiers) }
+        onClicked: function (mouse) { node.tap(mouse.modifiers) }
         onDoubleClicked: node.editing = true
 
         onPositionChanged: {
             if (drag.active)
-                node.moved(node.x + node.width / 2,
-                           node.y + node.height / 2)
+                node.moveTo(node.x + node.width / 2,
+                            node.y + node.height / 2)
         }
     }
 }

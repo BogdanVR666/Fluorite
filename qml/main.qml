@@ -1,6 +1,5 @@
 import QtQuick
 import QtQuick.Controls
-import QtQuick.Dialogs
 import QtQuick.Layouts
 import QtQuick.Shapes
 import Graphs
@@ -15,8 +14,6 @@ ApplicationWindow {
 
     property var nodeClasses: []
     property var edgeClasses: []
-    property string currentClass: "Звичайна"
-    property string currentEdgeClass: "Звичайне"
 
     function refreshClasses() {
         root.nodeClasses = backend.classList("node")
@@ -70,10 +67,8 @@ ApplicationWindow {
         nodeMenu.open()
     }
 
-    function openEdgeMenu(klass, a, b, px, py) {
-        edgeMenu.targetA = a
-        edgeMenu.targetB = b
-        edgeMenu.currentClass = klass
+    function openEdgeMenu(id, px, py) {
+        edgeMenu.edgeId = id
         if (!edgeMenu.refresh())
             return
         root.menuAnchor = Qt.point(px, py)
@@ -94,25 +89,28 @@ ApplicationWindow {
             backend.clearSelection()
             return
         }
-        backend.addNode(mx, my, root.currentClass)
+        backend.addNode(mx, my, classPanel.currentNodeClass)
     }
 
-    function handleNodeTap(id, modifiers) {
-        var chord = Qt.ControlModifier | Qt.ShiftModifier
-        if ((modifiers & chord) === chord) {
-            backend.connectSelectionTo(id, root.currentEdgeClass)
-            return
-        }
-        backend.selectNode(id, (modifiers & Qt.ShiftModifier) !== 0)
-    }
-
-    Shortcut {
+    Shortcut {   // без виділення Backspace належить панелі класів
         sequences: [StandardKey.Delete, "Backspace"]
+        enabled: backend.selectionCount > 0
         onActivated: backend.removeSelection()
     }
     Shortcut {
         sequence: "Escape"
         onActivated: backend.clearSelection()
+    }
+    // У текстовому полі Ctrl+Z скасовує набір тексту, а не зміни графа
+    Shortcut {
+        sequence: "Ctrl+Z"
+        enabled: classPanel.keyboard
+        onActivated: backend.undo()
+    }
+    Shortcut {
+        sequence: "Ctrl+Shift+Z"
+        enabled: classPanel.keyboard
+        onActivated: backend.redo()
     }
 
     footer: ToolBar {
@@ -145,54 +143,10 @@ ApplicationWindow {
 
         nodeClasses: root.nodeClasses
         edgeClasses: root.edgeClasses
-        currentNodeClass: root.currentClass
-        currentEdgeClass: root.currentEdgeClass
         keyboard: !nodeMenu.opened && !edgeMenu.opened
                   && !(root.activeFocusItem instanceof TextInput)
                   && !(root.activeFocusItem instanceof TextEdit)
         arrows: backend.selectionCount === 0
-
-        onClassPicked: function (family, name) {
-            if (family === "node")
-                root.currentClass = name
-            else
-                root.currentEdgeClass = name
-        }
-        onConnectClassRequested: function (name) {
-            backend.connectClassNodes(name, root.currentEdgeClass)
-        }
-        onUpdateRequested: function (family, name, design) {
-            backend.updateClass(family, name, design)
-        }
-        onCreateRequested: function (family, name, design) {
-            if (backend.createClass(family, name, design)) {
-                if (family === "node")
-                    root.currentClass = name
-                else
-                    root.currentEdgeClass = name
-                classPanel.resetForm()
-            }
-        }
-        onSaveRequested: saveDialog.open()
-        onOpenRequested: openDialog.open()
-        onClearRequested: backend.clear()
-    }
-
-    FileDialog {
-        id: saveDialog
-        title: "Зберегти граф"
-        fileMode: FileDialog.SaveFile
-        nameFilters: ["Граф JSON (*.json)", "Усі файли (*)"]
-        defaultSuffix: "json"
-        onAccepted: backend.saveToFile(selectedFile)
-    }
-
-    FileDialog {
-        id: openDialog
-        title: "Відкрити граф"
-        fileMode: FileDialog.OpenFile
-        nameFilters: ["Граф JSON (*.json)", "Усі файли (*)"]
-        onAccepted: backend.loadFromFile(selectedFile)
     }
 
     Item {
@@ -217,9 +171,8 @@ ApplicationWindow {
                 var id = backend.nodeAt(mouse.x, mouse.y)
                 if (id === -1) {
                     var edge = backend.edgeAt(mouse.x, mouse.y)
-                    if (edge.a !== undefined)
-                        root.openEdgeMenu(edge.klass, edge.a, edge.b,
-                                          mouse.x, mouse.y)
+                    if (edge !== -1)
+                        root.openEdgeMenu(edge, mouse.x, mouse.y)
                     return
                 }
                 var info = backend.nodeInfo(id)
@@ -253,7 +206,7 @@ ApplicationWindow {
                 root.edgeSourceId = -1
                 var tgt = backend.nodeAt(mouse.x, mouse.y)
                 if (tgt !== -1 && tgt !== src) {
-                    backend.addEdge(src, tgt, root.currentEdgeClass)
+                    backend.addEdge(src, tgt, classPanel.currentEdgeClass)
                 } else if (tgt === src) {
                     root.openNodeMenu(src, mouse.x, mouse.y)
                 }
@@ -285,17 +238,7 @@ ApplicationWindow {
             model: backend.nodesModel
 
             delegate: Node {
-                id: nodeItem
-
-                onTapped: function (modifiers) {
-                    root.handleNodeTap(nodeId, modifiers)
-                }
-                onMoved: function (cx, cy) {
-                    if (nodeItem.nodeSelected && backend.selectionCount > 1)
-                        backend.moveSelectionTo(nodeId, cx, cy)
-                    else
-                        backend.moveNode(nodeId, cx, cy)
-                }
+                edgeClass: classPanel.currentEdgeClass
             }
         }
 
@@ -319,7 +262,7 @@ ApplicationWindow {
             y: root.menuY(height)
 
             selectionCount: backend.selectionCount
-            edgeClass: root.currentEdgeClass
+            edgeClass: classPanel.currentEdgeClass
         }
 
         EdgeMenu {

@@ -1,3 +1,4 @@
+import functools
 import math
 from itertools import combinations
 from time import monotonic
@@ -20,9 +21,9 @@ from PySide6.QtCore import (
 from PySide6.QtGui import QColor, QImage, QPainter, QPainterPath, QPen
 from PySide6.QtQuick import QQuickPaintedItem
 
+import history
 import storage
-from layers import LayeredGraph
-from nodes import Node
+from document import Document
 
 
 def _point_segment_dist2(px: float, py: float,
@@ -38,27 +39,29 @@ def _point_segment_dist2(px: float, py: float,
 _BEND_STEP = 14.0   # відстань між сусідніми паралельними ребрами, px
 
 
-def _visual_owners(store) -> dict[int, int | None]:
-    return {nid: store.visual_owner(nid) for nid in store.nodes}
+def _visual_owners(doc: Document) -> dict[int, int | None]:
+    return {nid: doc.visual_owner(nid) for nid in doc.type_of}
 
 
-def _edge_bends(store) -> dict[tuple[str, int, int], float]:
-    owners = _visual_owners(store)
-    pairs: dict[tuple[int, int], list[tuple[str, int, int, int]]] = {}
-    for name, u, v, _ in store.edges():
+def _edge_bends(doc: Document) -> dict[int, float]:
+    """Вигин кожного з паралельних ребер (між тими самими вершинами на
+    екрані), щоб вони не злипались в одну лінію."""
+    owners = _visual_owners(doc)
+    pairs: dict[tuple[int, int], list[tuple[int, int]]] = {}
+    for eid, u, v in doc.shown_edges():
         ou, ov = owners[u], owners[v]
         if ou is None or ov is None or ou == ov:
             continue
         key = (ou, ov) if ou < ov else (ov, ou)
-        pairs.setdefault(key, []).append((name, u, v, ou))
-    bends: dict[tuple[str, int, int], float] = {}
+        pairs.setdefault(key, []).append((eid, ou))
+    bends: dict[int, float] = {}
     for (a, _), group in pairs.items():
         k = len(group)
         if k < 2:
             continue
-        for i, (name, u, v, ou) in enumerate(group):
+        for i, (eid, ou) in enumerate(group):
             off = (i - (k - 1) / 2.0) * _BEND_STEP
-            bends[(name, u, v)] = off if ou == a else -off
+            bends[eid] = off if ou == a else -off
     return bends
 
 
@@ -133,9 +136,9 @@ class NodesModel(QAbstractListModel):
     IsGroupRole = Qt.UserRole + 14   # вершина — метавершина групи
     MembersRole = Qt.UserRole + 15   # скільки вершин у її групі
 
-    def __init__(self, store: LayeredGraph, parent=None):
+    def __init__(self, doc: Document, parent=None):
         super().__init__(parent)
-        self._store = store
+        self._doc = doc
         self._ids: list[int] = []          # порядок рядків моделі
         self._rows: dict[int, int] = {}    # nodeId → рядок, O(1) для row_of
         # Виділені вершини. Живуть тут, а не в QML, щоб делегат читав свій
@@ -167,36 +170,34 @@ class NodesModel(QAbstractListModel):
         if not index.isValid() or not (0 <= index.row() < len(self._ids)):
             return None
         nid = self._ids[index.row()]
-        node: Node = self._store.nodes[nid]
+        doc = self._doc
         if role == self.NodeIdRole:
             return nid
-        if role == self.XRole:
-            return node.x
-        if role == self.YRole:
-            return node.y
+        if role in (self.XRole, self.YRole):
+            look = doc.look(nid)
+            return look.x if role == self.XRole else look.y
         if role == self.LabelRole:
-            return node.label
+            return doc.node(nid).name
         if role == self.DegreeRole:
-            return self._store.degree(nid)
-        if role == self.ShapeRole:
-            return node.shape
-        if role == self.ColorRole:
-            return node.color
+            return doc.degree(nid)
+        if role in (self.ShapeRole, self.ColorRole, self.OpacityRole):
+            style = doc.node_style(nid)
+            return (style.shape if role == self.ShapeRole
+                    else style.color if role == self.ColorRole
+                    else style.opacity)
         if role == self.ClassRole:
-            return node.klass.name
+            return doc.node_type(nid)
         if role == self.DescriptionRole:
-            return node.description
-        if role == self.OpacityRole:
-            return node.opacity
+            return doc.node(nid).description
         if role == self.SelectedRole:
             return nid in self._selected
         if role == self.HiddenRole:
-            return self._store.visual_owner(nid) != nid
+            return doc.visual_owner(nid) != nid
         if role == self.IsGroupRole:
-            return nid in self._store.group_of_node
+            return nid in doc.group_of_node
         if role == self.MembersRole:
-            gid = self._store.group_of_node.get(nid)
-            return 0 if gid is None else len(self._store.groups[gid].members)
+            gid = doc.group_of_node.get(nid)
+            return 0 if gid is None else len(doc.group_members(gid))
         return None
 
     def row_of(self, nid: int) -> int:
@@ -261,30 +262,123 @@ class NodesModel(QAbstractListModel):
         self.endResetModel()
 
 
+def _step(merge=None):
+    """Слот змінює граф: після нього стан іде в історію одним кроком.
+
+    merge(*args) дає ключ неперервної дії (перетягування, повзунок, набір
+    тексту). Виклики з тим самим ключем зливаються в один крок; він
+    записується перед іншою дією, перед Ctrl+Z або після паузи.
+    """
+    def wrap(fn):
+        @functools.wraps(fn)
+        def slot(self, *args):
+            key = merge(*args) if merge else None
+            if self._pending is not None and self._pending != key:
+                self._commit()
+            result = fn(self, *args)
+            if key is None:
+                self._commit()
+            else:
+                self._pending = key
+                self._idle.start()
+            return result
+        return slot
+    return wrap
+
+
 class GraphBackend(QObject):
     graphChanged = Signal()     # структура: шар ребер перемальовується
     edgesChanged = Signal()     # стиль/підсвітка ребер — перемалювання
     nodeMoved = Signal(int, float, float)   # рух вершини: (nid, x, y)
-    classesChanged = Signal()   # з'явився новий клас вершин
+    classesChanged = Signal()   # змінились типи вершин чи ребер
     selectionChanged = Signal() # змінився набір виділених вершин
     summaryChanged = Signal()   # статистика й лічильники класів (з паузою)
     statusChanged = Signal()    # повідомлення в статус-рядку
 
     _SUMMARY_MS = 100           # не частіше 10 оновлень зведення на секунду
+    _IDLE_MS = 600              # пауза, що завершує неперервну дію
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self._store = LayeredGraph()
-        self._model = NodesModel(self._store, self)
+        self._doc = Document()
+        self._model = NodesModel(self._doc, self)
         self._selected: set[int] = self._model._selected
         self._summary = QTimer(self)
         self._summary.setSingleShot(True)
         self._summary.setInterval(self._SUMMARY_MS)
         self._summary.timeout.connect(self.summaryChanged)
         self._status = ""
+        self._history = history.History()
+        self._history.reset(self._snapshot())
+        self._pending = None        # ключ неперервної дії, ще не в історії
+        self._idle = QTimer(self)
+        self._idle.setSingleShot(True)
+        self._idle.setInterval(self._IDLE_MS)
+        self._idle.timeout.connect(self._commit)
 
-    def _node(self, nid: int) -> Node:
-        return self._store.nodes[nid]
+    def _snapshot(self) -> dict:
+        return history.snapshot(self._doc)
+
+    def _commit(self):
+        """Записати в історію все, що змінилось від попереднього кроку."""
+        self._pending = None
+        self._idle.stop()
+        self._history.record(self._snapshot())
+
+    def _travel(self, change: dict, side: int):
+        """Перевести граф у стан side кроку change і оновити інтерфейс."""
+        added, removed = history.apply(self._doc, change, side)
+        if removed:
+            self._model.remove_nodes(removed)
+        for nid in sorted(added):
+            self._model.append_node(nid)
+        roles = list(self._model.roleNames())
+        for nid, pair in change.get("nodes", {}).items():
+            if None not in pair:          # вершина лишилась, але змінилась
+                self._model.notify_row(nid, roles)
+        for pair in change.get("edges", {}).values():
+            for rec in pair:              # у кінців змінився ступінь
+                if rec is None:
+                    continue
+                for nid in (rec[0].node_in, rec[0].node_out):
+                    if self._model.has_node(nid):
+                        self._model.notify_row(nid, [NodesModel.DegreeRole])
+        if "types" in change:
+            self._model.notify_all(self._CLASS_ROLES
+                                   + [NodesModel.HiddenRole])
+        if "groups" in change:
+            self._model.notify_all(self._GROUP_ROLES)
+        # виділення не в історії: лише прибрати з нього зниклі вершини
+        self._selected.intersection_update(self._doc.type_of.keys())
+        self._selection_changed()
+        self.graphChanged.emit()
+        self.classesChanged.emit()
+        self._summary_now()
+        self._history.rebase(self._snapshot())
+
+    @Slot()
+    def undo(self):
+        if self._pending is not None:
+            self._commit()
+        change = self._history.undo()
+        if change is None:
+            self._set_status("Нема що скасовувати")
+            return
+        self._travel(change, history.BEFORE)
+        self._set_status(f"Скасовано. Можна скасувати ще: "
+                         f"{self._history.undo_count}")
+
+    @Slot()
+    def redo(self):
+        if self._pending is not None:
+            self._commit()
+        change = self._history.redo()
+        if change is None:
+            self._set_status("Нема що повторювати")
+            return
+        self._travel(change, history.AFTER)
+        self._set_status(f"Повторено. Можна повторити ще: "
+                         f"{self._history.redo_count}")
 
     def _structure_changed(self):
         self.graphChanged.emit()
@@ -301,9 +395,9 @@ class GraphBackend(QObject):
 
     @Property(str, notify=summaryChanged)
     def stats(self):
-        n = len(self._store.nodes)
-        m = self._store.edge_count()
-        c = self._store.component_count()
+        n = len(self._doc.type_of)
+        m = self._doc.edge_count()
+        c = self._doc.component_count()
         return f"Вершин: {n}  •  Ребер: {m}  •  Компонент зв'язності: {c}"
 
     _HINT = ("ЛКМ по полю — нова вершина, ЛКМ-перетяг — рамка виділення "
@@ -331,9 +425,11 @@ class GraphBackend(QObject):
         self._model.set_selected(self._selected)
         self.selectionChanged.emit()
 
+    # ---- виділення ----------------------------------------------------
+
     @Slot(int, bool)
     def selectNode(self, nid: int, additive: bool):
-        if nid not in self._store.nodes:
+        if not self._doc.has_node(nid):
             return
         if additive:
             self._selected ^= {nid}
@@ -348,9 +444,9 @@ class GraphBackend(QObject):
     def selectInRect(self, x: float, y: float, w: float, h: float,
                      additive: bool):
         x2, y2 = x + w, y + h
-        hits = {nid for nid, node in self._store.nodes.items()
-                if x <= node.x <= x2 and y <= node.y <= y2
-                and self._store.visual_owner(nid) == nid}
+        hits = {nid for nid, look in self._doc.view.nodes.items()
+                if x <= look.x <= x2 and y <= look.y <= y2
+                and self._doc.visual_owner(nid) == nid}
         if not additive:
             self._selected.clear()
         self._selected |= hits
@@ -370,32 +466,34 @@ class GraphBackend(QObject):
     def isSelected(self, nid: int) -> bool:
         return nid in self._selected
 
+    # ---- типи (класи) -------------------------------------------------
+
     @Slot(str, result="QVariantList")
     def classList(self, family: str):
-        fam = self._store.families.get(family)
-        if fam is None:
+        if family not in ("node", "edge"):
             return []
-        counts = ({n: len(ids) for n, ids in self._store.node_ids.items()}
-                  if family == "node"
-                  else {n: g.number_of_edges()
-                        for n, g in self._store.layers.items()})
+        doc = self._doc
         return [{
-            "name": cls.name,
-            "count": counts.get(cls.name, 0),
-            **cls.design_map(),
-        } for cls in fam.classes.values()]
+            "name": name,
+            "count": doc.class_count(family, name),
+            "default": doc.view.is_default(family, name),
+            "hidden": look.hidden,
+            **doc.design_map(family, name),
+        } for name, look in doc.types(family).items()]
 
     @Slot(str, str, "QVariantMap", result=bool)
+    @_step()
     def createClass(self, family: str, name: str, design: dict) -> bool:
-        if not self._store.create_class(family, name, design):
+        if not self._doc.create_class(family, name, design):
             self._set_status(f"Клас «{name}» вже існує")
             return False
         self.classesChanged.emit()
         return True
 
     @Slot(str, str, "QVariantMap")
+    @_step(lambda family, name, design: ('class', family, name))
     def updateClass(self, family: str, name: str, design: dict):
-        if not self._store.update_class(family, name, design):
+        if not self._doc.update_class(family, name, design):
             return
         if family == "node":
             self._model.notify_all([NodesModel.ShapeRole,
@@ -405,95 +503,109 @@ class GraphBackend(QObject):
             self.edgesChanged.emit()   # кеш EdgeLayer стане недійсним
         self.classesChanged.emit()
 
+    @Slot(str, str, str, result=bool)
+    @_step()
+    def renameClass(self, family: str, old: str, new: str) -> bool:
+        if not self._doc.rename_class(family, old, new):
+            self._set_status("Назва порожня" if not new.strip()
+                             else f"Клас «{new.strip()}» вже існує")
+            return False
+        if family == "node":
+            self._model.notify_all([NodesModel.ClassRole])
+        self._structure_changed()
+        self.classesChanged.emit()
+        self._set_status("")
+        return True
+
+    @Slot(str, str)
+    @_step()
+    def removeClass(self, family: str, name: str):
+        doc = self._doc
+        if doc.view.is_default(family, name):
+            self._set_status(f"Стандартний клас «{name}» видалити не можна")
+            return
+        if name not in doc.types(family):
+            return
+        doomed = set(doc.class_ids(name)) if family == "node" else set()
+        count = doc.class_count(family, name)
+        touched = doc.remove_class(family, name)
+        if touched is None:
+            return
+        self._nodes_removed(doomed, touched)
+        self.classesChanged.emit()
+        self._set_status(
+            f"Видалено клас «{name}»: "
+            + (f"вершин — {count}" if family == "node"
+               else f"ребер — {count}"))
+
+    @Slot(str, str, bool)
+    def setClassHidden(self, family: str, name: str, hidden: bool):
+        if not self._doc.set_class_hidden(family, name, hidden):
+            return
+        if family == "node":
+            self._model.notify_all([NodesModel.HiddenRole])
+            self._drop_hidden_from_selection()
+        self.graphChanged.emit()          # ребра до схованих теж зникають
+        self.classesChanged.emit()
+
+    @Slot(str, str, int)
+    def moveClass(self, family: str, name: str, index: int):
+        if self._doc.move_class(family, name, index):
+            self.classesChanged.emit()
+
     _CLASS_ROLES = [NodesModel.ShapeRole, NodesModel.ColorRole,
                     NodesModel.OpacityRole, NodesModel.ClassRole]
 
-    @Slot(str, int, int, str, result=bool)
-    def setEdgeClass(self, klass: str, a: int, b: int,
-                     new_name: str) -> bool:
-        # False, зокрема, коли пара вже зайнята ребром цільового класу
-        if not self._store.set_edge_class(klass, a, b, new_name):
-            self._set_status(f"Ребро класу «{new_name}» між цими вершинами "
-                             "вже існує")
-            return False
-        self._structure_changed()      # перемальовує ребра й лічильники
-        return True
-
-    def _bulk_add_edges(self, pairs, edge_cls) -> int:
-        added = self._store.bulk_add_edges(pairs, edge_cls)
-        if added:
-            self._model.notify_all([NodesModel.DegreeRole])
-            self._structure_changed()
-        return added
-
-    @Slot(str, str)
-    def connectClassNodes(self, class_name: str, edge_class: str):
-        ids = self._store.class_ids(class_name)
-        if len(ids) < 2:
-            self._set_status(f"У класі «{class_name}» менше двох вершин")
-            return
-        added = self._bulk_add_edges(combinations(ids, 2),
-                                     self._store.edge_class(edge_class))
-        self._set_status(f"Клас «{class_name}»: додано ребер — {added}")
+    # ---- вершини ------------------------------------------------------
 
     @Slot(float, float, str)
+    @_step()
     def addNode(self, x: float, y: float, class_name: str):
-        nid = self._store.add_node(x, y, class_name)
+        nid = self._doc.add_node(x, y, class_name)
         self._model.append_node(nid)
         self._structure_changed()
 
     @Slot(int, str)
+    @_step()
     def setNodeLabel(self, nid: int, text: str):
-        self._node(nid).label = text
+        self._doc.set_label(nid, text)
         self._model.notify_row(nid, [NodesModel.LabelRole])
 
     @Slot(int, str)
+    @_step(lambda nid, text: ('description', nid))
     def setNodeDescription(self, nid: int, text: str):
-        self._node(nid).description = text
+        self._doc.set_description(nid, text)
         self._model.notify_row(nid, [NodesModel.DescriptionRole])
 
-    @Slot(int, int, str)
-    def addEdge(self, a: int, b: int, edge_class: str):
-        if not self._store.add_edge(a, b, edge_class):
-            self._set_status("Таке ребро вже існує")
+    @Slot(int, float, float)
+    @_step(lambda nid, x, y: ('move', nid))
+    def moveNode(self, nid: int, x: float, y: float):
+        self._doc.move_node(nid, x, y)
+        self._model.notify_row(nid, [NodesModel.XRole, NodesModel.YRole])
+        # структура не змінилась — статистику й класи не перераховуємо,
+        # а шар ребер оновлює лише лінії цієї вершини
+        self.nodeMoved.emit(nid, x, y)
+
+    @Slot(int, float, float)
+    @_step(lambda anchor, x, y: ('move', anchor))
+    def moveSelectionTo(self, anchor: int, x: float, y: float):
+        doc = self._doc
+        if not doc.has_node(anchor):
             return
-        for nid in (a, b):
-            self._model.notify_row(nid, [NodesModel.DegreeRole])
-        self._structure_changed()
-
-    @Slot(str, int, int)
-    def removeEdge(self, klass: str, a: int, b: int):
-        if not self._store.remove_edge(klass, a, b):
-            return
-        for nid in (a, b):
-            self._model.notify_row(nid, [NodesModel.DegreeRole])
-        self._structure_changed()
-
-    @Slot(str, int, int, str)
-    def setEdgeColor(self, klass: str, a: int, b: int, color: str):
-        edge = self._store.find_edge(klass, a, b)
-        if edge is not None:
-            edge.color = color
-            self.edgesChanged.emit()
-
-    @Slot(str, int, int, float)
-    def setEdgeWidth(self, klass: str, a: int, b: int, width: float):
-        edge = self._store.find_edge(klass, a, b)
-        if edge is not None:
-            edge.width = width
-            self.edgesChanged.emit()
-
-    @Slot(str, int, int, str)
-    def setEdgeLine(self, klass: str, a: int, b: int, line: str):
-        edge = self._store.find_edge(klass, a, b)
-        if edge is not None:
-            edge.line = line
-            self.edgesChanged.emit()
+        look = doc.look(anchor)
+        dx, dy = x - look.x, y - look.y
+        for nid in self._selected | {anchor}:
+            look = doc.look(nid)
+            nx_, ny_ = ((x, y) if nid == anchor
+                        else (look.x + dx, look.y + dy))
+            doc.move_node(nid, nx_, ny_)
+            self._model.notify_row(nid, [NodesModel.XRole, NodesModel.YRole])
+            self.nodeMoved.emit(nid, nx_, ny_)
 
     def _remove_one(self, nid: int):
-        if nid not in self._store.nodes:
+        if not self._doc.has_node(nid):
             return
-        neighbors = self._store.remove_node(nid)
+        neighbors = self._doc.remove_node(nid)
         self._model.remove_node(nid)      # і викидає nid із self._selected
         for nb in neighbors:              # у сусідів змінився ступінь
             if self._model.has_node(nb):
@@ -501,7 +613,7 @@ class GraphBackend(QObject):
 
     def _drain_orphans(self):
         while True:
-            orphans = self._store.take_orphans()
+            orphans = self._doc.take_orphans()
             if not orphans:
                 return
             for nid in orphans:
@@ -511,8 +623,9 @@ class GraphBackend(QObject):
                     NodesModel.MembersRole]
 
     @Slot(int)
+    @_step()
     def removeNode(self, nid: int):
-        if nid not in self._store.nodes:
+        if not self._doc.has_node(nid):
             return
         was_selected = nid in self._selected
         self._remove_one(nid)
@@ -527,10 +640,10 @@ class GraphBackend(QObject):
     def nodeAt(self, x: float, y: float) -> int:
         hit2 = 26.0 * 26.0                # радіус влучання (вершина ~44px)
         best, best_d = -1, hit2
-        for nid, node in self._store.nodes.items():
-            if self._store.visual_owner(nid) != nid:
+        for nid, look in self._doc.view.nodes.items():
+            if self._doc.visual_owner(nid) != nid:
                 continue                  # зараз не видно (групи)
-            dx, dy = node.x - x, node.y - y
+            dx, dy = look.x - x, look.y - y
             d = dx * dx + dy * dy
             if d <= best_d:
                 best, best_d = nid, d
@@ -538,160 +651,225 @@ class GraphBackend(QObject):
 
     @Slot(int, result="QVariantMap")
     def nodeInfo(self, nid: int):
-        if nid not in self._store.nodes:
+        doc = self._doc
+        if not doc.has_node(nid):
             return {}
-        node = self._node(nid)
-        gid = self._store.member_of.get(nid, -1)     # чий вона член
-        own = self._store.group_of_node.get(nid, -1)  # чия метавершина
-        return {"label": node.label, "description": node.description,
-                "shape": node.shape, "color": node.color,
-                "opacity": node.opacity, "x": node.x, "y": node.y,
-                "klass": node.klass.name, "groupId": gid,
-                "groupLabel": (self._node(self._store.groups[gid].node).label
+        node, look, style = doc.node(nid), doc.look(nid), doc.node_style(nid)
+        gid = doc.member_of.get(nid, -1)     # чий вона член
+        own = doc.group_of_node.get(nid, -1)  # чия метавершина
+        return {"label": node.name, "description": node.description,
+                "shape": style.shape, "color": style.color,
+                "opacity": style.opacity, "x": look.x, "y": look.y,
+                "klass": doc.node_type(nid), "groupId": gid,
+                "groupLabel": (doc.node(doc.group_node(gid)).name
                                if gid != -1 else ""),
                 "isGroup": own != -1, "ownGroupId": own,
-                "memberCount": (len(self._store.groups[own].members)
+                "memberCount": (len(doc.group_members(own))
                                 if own != -1 else 0)}
 
-    @Slot(float, float, result="QVariantMap")
-    def edgeAt(self, x: float, y: float):
-        hit2 = 7.0 * 7.0                  # допуск влучання у лінію, px^2
-        owners = _visual_owners(self._store)
-        bends = _edge_bends(self._store)
-        best, best_d = None, hit2
-        for name, a, b, _ in self._store.edges():
-            oa, ob = owners[a], owners[b]
-            if oa is None or ob is None or oa == ob:
-                continue                  # ребра зараз не видно
-            na, nb = self._node(oa), self._node(ob)
-            bend = bends.get((name, a, b), 0.0)
-            if bend:
-                d = _point_bend_dist2(x, y, na.x, na.y, nb.x, nb.y, bend)
-            else:
-                d = _point_segment_dist2(x, y, na.x, na.y, nb.x, nb.y)
-            if d <= best_d:
-                best, best_d = (name, a, b), d
-        if best is None:
-            return {}
-        return {"klass": best[0], "a": best[1], "b": best[2]}
-
-    @Slot(str, int, int, result="QVariantMap")
-    def edgeInfo(self, klass: str, a: int, b: int):
-        uv = self._store.orientation(klass, a, b)
-        if uv is None:
-            return {}
-        edge = self._store.find_edge(klass, a, b)
-        src, dst = uv                     # орієнтація в шарі і є напрям
-        sep = " → " if edge.directed else "–"
-        return {"label": f"{self._node(src).label}{sep}{self._node(dst).label}",
-                "color": edge.color, "width": edge.width, "line": edge.line,
-                "directed": edge.directed,
-                "klass": edge.klass.name}
-
-    @Slot(str, int, int)
-    def reverseEdge(self, klass: str, a: int, b: int):
-        if self._store.reverse_edge(klass, a, b):
-            self.edgesChanged.emit()
-
-    @Slot(int, float, float)
-    def moveNode(self, nid: int, x: float, y: float):
-        node = self._node(nid)
-        node.x = x
-        node.y = y
-        self._model.notify_row(nid, [NodesModel.XRole, NodesModel.YRole])
-        # структура не змінилась — статистику й класи не перераховуємо,
-        # а шар ребер оновлює лише лінії цієї вершини
-        self.nodeMoved.emit(nid, x, y)
-
-    @Slot(int, float, float)
-    def moveSelectionTo(self, anchor: int, x: float, y: float):
-        if anchor not in self._store.nodes:
-            return
-        node = self._node(anchor)
-        dx, dy = x - node.x, y - node.y
-        for nid in self._selected | {anchor}:
-            n = self._node(nid)
-            n.x = x if nid == anchor else n.x + dx
-            n.y = y if nid == anchor else n.y + dy
-            self._model.notify_row(nid, [NodesModel.XRole, NodesModel.YRole])
-            self.nodeMoved.emit(nid, n.x, n.y)
-
     @Slot()
+    @_step()
     def removeSelection(self):
         if not self._selected:
             return
         n = len(self._selected)
         doomed = set(self._selected)
-        neighbors = self._store.remove_nodes(doomed)
-        self._model.remove_nodes(doomed)  # і викидає їх із self._selected
-        self._drain_orphans()             # метавершини розчинених груп
-        for nb in neighbors:
-            if self._model.has_node(nb):
-                self._model.notify_row(nb, [NodesModel.DegreeRole])
-        self._selection_changed()
-        self._model.notify_all(self._GROUP_ROLES)
-        self._structure_changed()
+        self._nodes_removed(doomed, self._doc.remove_nodes(doomed))
         self._set_status(f"Видалено вершин: {n}")
 
+    def _nodes_removed(self, doomed: set[int], touched: set[int]):
+        """Донести до моделі видалення вершин doomed із документа."""
+        was_selected = bool(self._selected & doomed)
+        if doomed:
+            self._model.remove_nodes(doomed)  # і викидає їх із self._selected
+        self._drain_orphans()                 # метавершини розчинених груп
+        for nid in touched:                   # у них змінився ступінь
+            if self._model.has_node(nid):
+                self._model.notify_row(nid, [NodesModel.DegreeRole])
+        if was_selected:
+            self._selection_changed()
+        self._model.notify_all(self._GROUP_ROLES)
+        self._structure_changed()
+
     @Slot(str)
+    @_step()
     def setSelectionClass(self, class_name: str):
-        cls = self._store.families["node"].get(class_name)
-        if cls is None or not self._selected:
+        if class_name not in self._doc.view.node_types or not self._selected:
             return
         for nid in self._selected:
-            self._store.set_node_class(nid, cls)
+            self._doc.set_node_class(nid, class_name)
         self._model.notify_all(self._CLASS_ROLES)
         self._structure_changed()
 
     @Slot(str)
+    @_step()
     def setSelectionShape(self, shape: str):
         for nid in self._selected:
-            self._node(nid).shape = shape
+            self._doc.set_node_style(nid, shape=shape)
         self._model.notify_all([NodesModel.ShapeRole])
 
     @Slot(str)
+    @_step()
     def setSelectionColor(self, color: str):
         for nid in self._selected:
-            self._node(nid).color = color
+            self._doc.set_node_style(nid, color=color)
         self._model.notify_all([NodesModel.ColorRole])
 
     @Slot(float)
+    @_step(lambda opacity: ('opacity',))
     def setSelectionOpacity(self, opacity: float):
         for nid in self._selected:
-            self._node(nid).opacity = opacity
+            self._doc.set_node_style(nid, opacity=opacity)
         self._model.notify_all([NodesModel.OpacityRole])
 
+    # ---- ребра --------------------------------------------------------
+
+    def _bulk_add_edges(self, pairs, edge_class: str) -> int:
+        added = self._doc.bulk_add_edges(pairs, edge_class)
+        if added:
+            self._model.notify_all([NodesModel.DegreeRole])
+            self._structure_changed()
+        return added
+
+    @Slot(str, str)
+    @_step()
+    def connectClassNodes(self, class_name: str, edge_class: str):
+        ids = self._doc.class_ids(class_name)
+        if len(ids) < 2:
+            self._set_status(f"У класі «{class_name}» менше двох вершин")
+            return
+        added = self._bulk_add_edges(combinations(ids, 2), edge_class)
+        self._set_status(f"Клас «{class_name}»: додано ребер — {added}")
+
+    @Slot(int, int, str)
+    @_step()
+    def addEdge(self, a: int, b: int, edge_class: str):
+        if self._doc.add_edge(a, b, edge_class) is None:
+            self._set_status("Таке ребро вже існує")
+            return
+        for nid in (a, b):
+            self._model.notify_row(nid, [NodesModel.DegreeRole])
+        self._structure_changed()
+
+    @Slot(int)
+    @_step()
+    def removeEdge(self, eid: int):
+        if not self._doc.has_edge(eid):
+            return
+        ends = self._doc.ends(eid)
+        self._doc.remove_edge(eid)
+        for nid in ends:
+            self._model.notify_row(nid, [NodesModel.DegreeRole])
+        self._structure_changed()
+
+    @Slot(int, str)
+    @_step()
+    def setEdgeColor(self, eid: int, color: str):
+        if self._doc.has_edge(eid):
+            self._doc.set_edge_style(eid, color=color)
+            self.edgesChanged.emit()
+
+    @Slot(int, float)
+    @_step()
+    def setEdgeWidth(self, eid: int, width: float):
+        if self._doc.has_edge(eid):
+            self._doc.set_edge_style(eid, width=width)
+            self.edgesChanged.emit()
+
+    @Slot(int, str)
+    @_step()
+    def setEdgeLine(self, eid: int, line: str):
+        if self._doc.has_edge(eid):
+            self._doc.set_edge_style(eid, line=line)
+            self.edgesChanged.emit()
+
+    @Slot(int)
+    @_step()
+    def reverseEdge(self, eid: int):
+        if self._doc.reverse_edge(eid):
+            self.edgesChanged.emit()
+
+    @Slot(int, str, result=bool)
+    @_step()
+    def setEdgeClass(self, eid: int, new_name: str) -> bool:
+        # False, зокрема, коли пара вже зайнята ребром цільового класу
+        if not self._doc.set_edge_class(eid, new_name):
+            self._set_status(f"Ребро класу «{new_name}» між цими вершинами "
+                             "вже існує")
+            return False
+        self._structure_changed()      # перемальовує ребра й лічильники
+        return True
+
+    @Slot(float, float, result=int)
+    def edgeAt(self, x: float, y: float) -> int:
+        """id ребра під точкою або -1."""
+        hit2 = 7.0 * 7.0                  # допуск влучання у лінію, px^2
+        doc = self._doc
+        owners = _visual_owners(doc)
+        bends = _edge_bends(doc)
+        best, best_d = -1, hit2
+        for eid, a, b in doc.shown_edges():
+            oa, ob = owners[a], owners[b]
+            if oa is None or ob is None or oa == ob:
+                continue                  # ребра зараз не видно
+            la, lb = doc.look(oa), doc.look(ob)
+            bend = bends.get(eid, 0.0)
+            if bend:
+                d = _point_bend_dist2(x, y, la.x, la.y, lb.x, lb.y, bend)
+            else:
+                d = _point_segment_dist2(x, y, la.x, la.y, lb.x, lb.y)
+            if d <= best_d:
+                best, best_d = eid, d
+        return best
+
+    @Slot(int, result="QVariantMap")
+    def edgeInfo(self, eid: int):
+        doc = self._doc
+        if not doc.has_edge(eid):
+            return {}
+        src, dst = doc.ends(eid)
+        directed = doc.edge_directed(eid)
+        style = doc.edge_style(eid)
+        sep = " → " if directed else "–"
+        return {"label": f"{doc.node(src).name}{sep}{doc.node(dst).name}",
+                "color": style.color, "width": style.width,
+                "line": style.line, "directed": directed,
+                "klass": doc.edge_type(eid)}
+
     @Slot(str)
+    @_step()
     def connectSelection(self, edge_class: str):
         if len(self._selected) < 2:
             self._set_status("Виділено менше двох вершин")
             return
         added = self._bulk_add_edges(combinations(self._selected, 2),
-                                     self._store.edge_class(edge_class))
+                                     edge_class)
         self._set_status(f"Виділено вершин: {len(self._selected)}, "
                          f"додано ребер — {added}")
 
     @Slot(str, str)
+    @_step()
     def connectSelectionToClass(self, class_name: str,
                                 edge_class: str):
         if not self._selected:
             self._set_status("")
             return
-        ids = self._store.class_ids(class_name)
+        ids = self._doc.class_ids(class_name)
         if not ids or set(ids) <= self._selected:
             self._set_status(f"У класі «{class_name}» немає інших вершин")
             return
         added = self._bulk_add_edges(
             ((nid, other) for nid in self._selected for other in ids),
-            self._store.edge_class(edge_class))
+            edge_class)
         self._set_status(
             f"Виділені → клас «{class_name}»: додано ребер — {added}")
 
     @Slot(int, str)
+    @_step()
     def connectSelectionTo(self, nid: int, edge_class: str):
         """Ребра від усіх виділених до nid, потім nid стає виділеною.
         Виділена nid натомість знімається з виділення, без ребер."""
-        if nid not in self._store.nodes:
+        if not self._doc.has_node(nid):
             self._set_status("")
             return
         if nid in self._selected:
@@ -700,11 +878,12 @@ class GraphBackend(QObject):
             self._set_status("")
             return
         added = self._bulk_add_edges(
-            ((src, nid) for src in self._selected),
-            self._store.edge_class(edge_class))
+            ((src, nid) for src in self._selected), edge_class)
         self._selected.add(nid)
         self._selection_changed()
         self._set_status(f"Додано ребер: {added}" if added else "")
+
+    # ---- групи --------------------------------------------------------
 
     def _groups_changed(self):
         self._model.notify_all(self._GROUP_ROLES)
@@ -712,44 +891,46 @@ class GraphBackend(QObject):
 
     def _drop_hidden_from_selection(self):
         hidden = {nid for nid in self._selected
-                  if self._store.visual_owner(nid) != nid}
+                  if self._doc.visual_owner(nid) != nid}
         if hidden:
             self._selected -= hidden
             self._selection_changed()
 
     @Slot()
+    @_step()
     def groupSelection(self):
-        gid = self._store.add_group(set(self._selected))
+        doc = self._doc
+        gid = doc.add_group(set(self._selected))
         if gid is None:
             self._set_status("Для групи треба щонайменше дві вершини")
             return
-        grp = self._store.groups[gid]
-        if not self._model.has_node(grp.node):
-            self._model.append_node(grp.node)   # свіжа метавершина
-        self._store.set_collapsed(gid, True)
-        self._model.notify_row(grp.node, [NodesModel.XRole,
-                                          NodesModel.YRole])
+        meta = doc.group_node(gid)
+        if not self._model.has_node(meta):
+            self._model.append_node(meta)   # свіжа метавершина
+        doc.set_collapsed(gid, True)
+        self._model.notify_row(meta, [NodesModel.XRole, NodesModel.YRole])
         self._drop_hidden_from_selection()
         self._drain_orphans()          # метавершини поглинутих груп
         self._groups_changed()
-        label = self._node(grp.node).label
-        self._set_status(
-            f"Групу «{label}» згорнуто (вершин: {len(grp.members)})")
+        self._set_status(f"Групу «{doc.node(meta).name}» згорнуто "
+                         f"(вершин: {len(doc.group_members(gid))})")
 
     @Slot(int, bool)
+    @_step()
     def setGroupCollapsed(self, gid: int, collapsed: bool):
-        if not self._store.set_collapsed(gid, collapsed):
+        if not self._doc.set_collapsed(gid, collapsed):
             return
         if collapsed:
             # метавершина стала в центроїд членів
-            self._model.notify_row(self._store.groups[gid].node,
+            self._model.notify_row(self._doc.group_node(gid),
                                    [NodesModel.XRole, NodesModel.YRole])
         self._drop_hidden_from_selection()
         self._groups_changed()
 
     @Slot(int)
+    @_step()
     def ungroup(self, gid: int):
-        node = self._store.remove_group(gid)
+        node = self._doc.remove_group(gid)
         if node is None:
             return
         was_selected = node in self._selected
@@ -760,9 +941,12 @@ class GraphBackend(QObject):
         self._model.notify_all(self._GROUP_ROLES)
         self._structure_changed()
 
+    # ---- документ цілком ----------------------------------------------
+
     @Slot()
+    @_step()
     def clear(self):
-        self._store.clear()
+        self._doc.clear()
         self._model.reset_all()      # чистить і виділення
         self.selectionChanged.emit()
         self.graphChanged.emit()
@@ -774,7 +958,7 @@ class GraphBackend(QObject):
         path = url.toLocalFile()
         try:
             with open(path, "w", encoding="utf-8") as f:
-                f.write(storage.graph_to_json(self._store))
+                f.write(storage.graph_to_json(self._doc))
         except OSError as e:
             self._set_status(f"Не вдалося зберегти: {e}")
             return
@@ -791,21 +975,24 @@ class GraphBackend(QObject):
             return
 
         try:
-            # сховище мутується лише після успішного розбору всього файла
-            new_store = storage.graph_from_json(text)
+            # документ мутується лише після успішного розбору всього файла
+            new_doc = storage.graph_from_json(text)
         except (ValueError, KeyError, TypeError) as e:
             self._set_status(f"Не вдалося прочитати граф: {e}")
             return
 
-        self._store.adopt(new_store)
-        self._model.reset_with(self._store.nodes)   # чистить і виділення
+        self._doc.adopt(new_doc)
+        self._model.reset_with(self._doc.type_of)   # чистить і виділення
+        self._pending = None
+        self._idle.stop()
+        self._history.reset(self._snapshot())       # новий файл — нова історія
         self.selectionChanged.emit()
         self.classesChanged.emit()
         self.graphChanged.emit()
         self._summary_now()
         self._set_status(
-            f"Відкрито: {path}  (вершин: {len(self._store.nodes)}, "
-            f"ребер: {self._store.edge_count()})")
+            f"Відкрито: {path}  (вершин: {len(self._doc.type_of)}, "
+            f"ребер: {self._doc.edge_count()})")
 
 
 class EdgeLayer(QQuickPaintedItem):
@@ -847,7 +1034,7 @@ class EdgeLayer(QQuickPaintedItem):
 
     def _enter_fast(self):
         if (self._backend is None
-                or self._backend._store.edge_count() < self._FAST_EDGES):
+                or self._backend._doc.edge_count() < self._FAST_EDGES):
             return
         if not self._fast:
             self._fast = True
@@ -923,23 +1110,23 @@ class EdgeLayer(QQuickPaintedItem):
     source = Property(QObject, _source, _set_source, notify=sourceChanged)
 
     def _rebuild(self):
-        store = self._backend._store
-        nodes = store.nodes
-        owners = _visual_owners(store)
-        bends = _edge_bends(store)
+        doc = self._backend._doc
+        owners = _visual_owners(doc)
+        bends = _edge_bends(doc)
         groups: dict[tuple, list[QLineF]] = {}
         arrows: dict[tuple, list[QLineF]] = {}
         curves: dict[tuple, list[tuple[QLineF, float]]] = {}
         incident: dict[int, list[tuple[QLineF, bool, tuple | None]]] = {}
-        for name, a, b, edge in store.edges():
+        for eid, a, b in doc.shown_edges():
             oa, ob = owners[a], owners[b]
             if oa is None or ob is None or oa == ob:
                 continue    # ребра зараз не видно
-            na, nb = nodes[oa], nodes[ob]
-            directed = edge.directed
-            key = (edge.color, edge.width, edge.line, directed)
+            na, nb = doc.look(oa), doc.look(ob)
+            directed = doc.edge_directed(eid)
+            style = doc.edge_style(eid)
+            key = (style.color, style.width, style.line, directed)
             line = QLineF(na.x, na.y, nb.x, nb.y)
-            bend = bends.get((name, a, b), 0.0)
+            bend = bends.get(eid, 0.0)
             barbs = None
             if bend:
                 curves.setdefault(key, []).append((line, bend))
@@ -947,7 +1134,7 @@ class EdgeLayer(QQuickPaintedItem):
                 groups.setdefault(key, []).append(line)
                 if directed:
                     left, right = QLineF(), QLineF()
-                    barbs = (left, right, _barb_len(edge.width))
+                    barbs = (left, right, _barb_len(style.width))
                     _fit_arrow(line, *barbs)
                     arrows.setdefault(key, []).extend((left, right))
             incident.setdefault(oa, []).append((line, True, barbs))
@@ -1059,7 +1246,7 @@ class EdgeLayer(QQuickPaintedItem):
     def paint(self, painter: QPainter):
         if self._backend is None:
             return
-        n_edges = self._backend._store.edge_count()
+        n_edges = self._backend._doc.edge_count()
         if n_edges == 0:
             return
         if self._groups is None:

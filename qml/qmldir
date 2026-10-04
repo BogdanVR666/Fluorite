@@ -6,3 +6,4 @@ LineField 1.0 LineField.qml
 TextBox 1.0 TextBox.qml
 FlatButton 1.0 FlatButton.qml
 DropDown 1.0 DropDown.qml
+ConfirmDialog 1.0 ConfirmDialog.qml
