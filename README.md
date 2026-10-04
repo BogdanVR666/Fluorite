@@ -1,6 +1,7 @@
-<p align="center">
-  <img src="assets/banner.png" width="100%">
-</p>
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="assets/banner-light.png">
+  <img alt="Fluorite — візуальний редактор графів" src="assets/banner-dark.png">
+</picture>
 
 # Fluorite
 
