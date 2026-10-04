@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="assets/banner.png" width="100%">
+</p>
+
 # Fluorite
 
 Візуальний редактор графів на **Python (PySide6 + QML / Qt Quick)** поверх моделі даних [FluoriteGraph](https://github.com/BogdanVR666/FluoriteGraph).
