@@ -47,9 +47,9 @@ Item {
             backend.setNodeLabel(nodeId, t)
     }
 
-    width: Math.max(44, (editing && editLoader.item ? editLoader.item.width
+    width: Math.max(Theme.nodeHeight, (editing && editLoader.item ? editLoader.item.width
                                                      : textElement.width) + 20)
-    height: 44
+    height: Theme.nodeHeight
     x: px - width / 2
     y: py - height / 2
     z: editing || hoverArea.containsMouse ? 2 : 1
@@ -59,7 +59,7 @@ Item {
 
     property color strokeColor:
         hoverArea.containsMouse ? Theme.foreground
-                                : Qt.alpha(Theme.foreground, 0.78)
+                                : Theme.nodeStroke
 
     readonly property bool round: effShape === "circle"
 
@@ -68,20 +68,20 @@ Item {
         anchors.centerIn: parent
         width: node.width + 12
         height: node.height + 12
-        radius: node.round ? width / 2 : 9
+        radius: node.round ? width / 2 : Theme.radiusMd + 6
         color: "transparent"
         border.color: Theme.marked
-        border.width: 3
+        border.width: Theme.strokeRing
         antialiasing: true
     }
 
     Rectangle {
         visible: !node.isGroup
         anchors.fill: parent
-        radius: node.round ? width / 2 : 8
+        radius: node.round ? width / 2 : Theme.radiusMd
         color: node.nodeColor
         border.color: node.strokeColor
-        border.width: 2
+        border.width: Theme.strokeNode
         opacity: node.nodeOpacity
         antialiasing: true
     }
@@ -101,7 +101,7 @@ Item {
                 y: 7
                 width: node.width - 8
                 height: node.height - 8
-                radius: 9
+                radius: Theme.radiusMd
                 color: Qt.darker(node.nodeColor, 1.8)
                 border.color: Qt.alpha(node.strokeColor, 0.5)
                 border.width: 1.5
@@ -111,7 +111,7 @@ Item {
                 y: 3.5
                 width: node.width - 8
                 height: node.height - 8
-                radius: 9
+                radius: Theme.radiusMd
                 color: Qt.darker(node.nodeColor, 1.35)
                 border.color: Qt.alpha(node.strokeColor, 0.7)
                 border.width: 1.5
@@ -121,10 +121,10 @@ Item {
                 y: 0 
                 width: node.width - 8
                 height: node.height - 8
-                radius: 9
+                radius: Theme.radiusMd
                 color: node.nodeColor
                 border.color: node.strokeColor
-                border.width: 2
+                border.width: Theme.strokeNode
             }
         }
     }
@@ -138,7 +138,7 @@ Item {
         font.bold: true
         font.pixelSize: 15
         style: Text.Outline
-        styleColor: Qt.alpha(Theme.background, 0.38)
+        styleColor: Theme.labelOutline
     }
 
     Loader {
@@ -156,7 +156,7 @@ Item {
             font: textElement.font
             horizontalAlignment: TextInput.AlignHCenter
             selectByMouse: true
-            selectionColor: Qt.alpha(Theme.marked, 0.45)
+            selectionColor: Theme.markedTextSelection
             selectedTextColor: Theme.foreground
 
             Component.onCompleted: {
@@ -176,8 +176,8 @@ Item {
             Rectangle {
                 anchors { left: parent.left; right: parent.right
                           top: parent.bottom; topMargin: 1 }
-                height: 2
-                radius: 1
+                height: Theme.strokeNode
+                radius: Theme.strokeNode / 2
                 color: Theme.marked
             }
         }
@@ -194,10 +194,11 @@ Item {
     Component {
         id: degreeBadge
         Rectangle {
-            width: 18; height: 18; radius: 9
+            width: Theme.badgeSize; height: Theme.badgeSize
+            radius: Theme.badgeSize / 2
             color: Theme.badge
             border.color: Theme.edge
-            border.width: 1
+            border.width: Theme.strokeHairline
             Text {
                 anchors.centerIn: parent
                 text: node.degree
@@ -219,10 +220,11 @@ Item {
     Component {
         id: memberBadge
         Rectangle {
-            width: 18; height: 18; radius: 9
+            width: Theme.badgeSize; height: Theme.badgeSize
+            radius: Theme.badgeSize / 2
             color: Theme.badge
             border.color: Theme.edge
-            border.width: 1
+            border.width: Theme.strokeHairline
             Text {
                 anchors.centerIn: parent
                 text: node.memberCount

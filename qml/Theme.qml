@@ -17,12 +17,12 @@ QtObject {
         "button.background":           "#3d7bd9",
         "list.hoverBackground":        "#3a3a52",
         "input.background":            "#2f2f45",
-        "descriptionForeground":       "#8888aa",
-        "disabledForeground":          "#66668a",
+        "descriptionForeground":       "#a5a5d7",
+        "disabledForeground":          "#8585b7",
         "focusBorder":                 "#f39c12",
         "badge.background":            "#2a2a3d",
         "badge.foreground":            "#ffffff",
-        "errorForeground":             "#e74c3c",
+        "errorForeground":             "#ff6767",
         "editorLineNumber.foreground": "#7f8fd9",
         "terminal.ansiBlue":           "#3d7bd9",
         "terminal.ansiRed":            "#e74c3c",
@@ -70,6 +70,47 @@ QtObject {
     readonly property color badge:         c("badge.background", "#4d4d4d")
     readonly property color badgeText:     c("badge.foreground", "#ffffff")
     readonly property color error:         c("errorForeground", "#f48771")
+
+    readonly property color markedFill:          Qt.alpha(marked, 0.12)
+    readonly property color markedTextSelection: Qt.alpha(marked, 0.45)
+    readonly property color nodeStroke:          Qt.alpha(foreground, 0.78)
+    readonly property color labelOutline:        Qt.alpha(background, 0.38)
+    readonly property color modalScrim:          Qt.alpha("black", 0.35)
+
+    readonly property int spaceXs: 4
+    readonly property int spaceSm: 8
+    readonly property int spaceMd: 12
+    readonly property int spaceLg: 16
+
+    readonly property int radiusSm: 4
+    readonly property int radiusMd: 8
+    readonly property int radiusLg: 12
+
+    readonly property int controlHeight:          32
+    readonly property int listItemHeight:         30
+    readonly property int classRowHeight:         36
+    readonly property int optionTile:             38
+    readonly property int optionTileSm:           34
+    readonly property int directionTileWidth:     52
+    readonly property int nodeHeight:             44
+    readonly property int badgeSize:              18
+    readonly property int checkboxSize:           16
+    readonly property int panelWidth:             210
+    readonly property int dialogWidth:            340
+    readonly property int menuMinWidth:           150
+    readonly property int dropdownMinWidth:       120
+    readonly property int dropdownListMaxHeight:  240
+    readonly property int descriptionHeight:      56
+
+    readonly property real strokeHairline: 1
+    readonly property real strokeNode:     2
+    readonly property real strokeRing:     2
+    readonly property real edgeDraftWidth: 3
+    readonly property var  edgeDraftDash:  [6, 5]
+    readonly property var  edgeWidths:     [2.5, 4, 6]
+
+    readonly property real disabledOpacity: 0.4
+    readonly property int  hoverDuration:   100
 
     readonly property var nodePalette: [
         c("terminal.ansiBlue",          "#3d7bd9"),

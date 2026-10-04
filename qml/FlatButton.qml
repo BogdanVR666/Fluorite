@@ -7,11 +7,11 @@ Button {
     property color textColor: Theme.foreground
 
     hoverEnabled: true
-    leftPadding: 10
-    rightPadding: 10
-    topPadding: 6
-    bottomPadding: 6
-    opacity: enabled ? 1 : 0.4
+    leftPadding: Theme.spaceMd
+    rightPadding: Theme.spaceMd
+    topPadding: Theme.spaceXs
+    bottomPadding: Theme.spaceXs
+    opacity: enabled ? 1 : Theme.disabledOpacity
 
     contentItem: Text {
         text: button.text
@@ -23,13 +23,13 @@ Button {
     }
 
     background: Rectangle {
-        implicitHeight: 32
-        radius: 8
+        implicitHeight: Theme.controlHeight
+        radius: Theme.radiusMd
         color: button.down ? Theme.accent
              : button.hovered ? Theme.hover
                               : Theme.control
-        border.width: 1
+        border.width: Theme.strokeHairline
         border.color: Theme.border
-        Behavior on color { ColorAnimation { duration: 100 } }
+        Behavior on color { ColorAnimation { duration: Theme.hoverDuration } }
     }
 }

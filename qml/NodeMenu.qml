@@ -78,20 +78,20 @@ Popup {
 
     background: Rectangle {
         color: Theme.popup
-        radius: 10
+        radius: Theme.radiusLg
         border.color: Theme.popupBorder
-        border.width: 1
+        border.width: Theme.strokeHairline
     }
 
     contentItem: Item {
-        implicitWidth: Math.max(150, col.implicitWidth + 24)
-        implicitHeight: col.implicitHeight + 24
+        implicitWidth: Math.max(Theme.menuMinWidth, col.implicitWidth + 2 * Theme.spaceMd)
+        implicitHeight: col.implicitHeight + 2 * Theme.spaceMd
 
         ColumnLayout {
             id: col
             anchors.fill: parent
-            anchors.margins: 12
-            spacing: 10
+            anchors.margins: Theme.spaceMd
+            spacing: Theme.spaceSm
 
             Label {
                 text: menu.group ? "Виділено вершин: " + menu.selectionCount
@@ -126,6 +126,7 @@ Popup {
             Label {
                 visible: !menu.group
                 text: "Текст"; color: Theme.mutedText; font.pixelSize: 12
+                Layout.topMargin: Theme.spaceXs
             }
 
             LineField {
@@ -142,12 +143,13 @@ Popup {
             Label {
                 visible: !menu.group
                 text: "Опис"; color: Theme.mutedText; font.pixelSize: 12
+                Layout.topMargin: Theme.spaceXs
             }
 
             ScrollView {
                 visible: !menu.group
                 Layout.fillWidth: true
-                Layout.preferredHeight: 56
+                Layout.preferredHeight: Theme.descriptionHeight
                 clip: true
 
                 TextBox {
@@ -166,24 +168,26 @@ Popup {
             Label {
                 visible: !menu.isGroup
                 text: "Форма"; color: Theme.mutedText; font.pixelSize: 12
+                Layout.topMargin: Theme.spaceXs
             }
 
             GridLayout {
                 visible: !menu.isGroup
                 columns: 4
-                columnSpacing: 6
+                columnSpacing: Theme.spaceSm
                 Repeater {
                     model: menu.shapeDefs
                     delegate: Rectangle {
                         required property var modelData
-                        width: 38; height: 38; radius: 8
+                        width: Theme.optionTile; height: Theme.optionTile
+                        radius: Theme.radiusMd
                         color: menu.currentShape === modelData.key
                                ? Theme.accent
                                : shapeHover.containsMouse ? Theme.hover
                                                           : Theme.control
-                        border.width: menu.currentShape === modelData.key ? 0 : 1
+                        border.width: menu.currentShape === modelData.key ? 0 : Theme.strokeHairline
                         border.color: Theme.border
-                        Behavior on color { ColorAnimation { duration: 100 } }
+                        Behavior on color { ColorAnimation { duration: Theme.hoverDuration } }
 
                         Text {
                             anchors.centerIn: parent
@@ -205,21 +209,25 @@ Popup {
                 }
             }
 
-            Label { text: "Колір"; color: Theme.mutedText; font.pixelSize: 12 }
+            Label {
+                text: "Колір"; color: Theme.mutedText; font.pixelSize: 12
+                Layout.topMargin: Theme.spaceXs
+            }
 
             GridLayout {
                 columns: 4
-                columnSpacing: 6
-                rowSpacing: 6
+                columnSpacing: Theme.spaceSm
+                rowSpacing: Theme.spaceSm
                 Repeater {
                     model: menu.colorPalette
                     delegate: Rectangle {
                         required property string modelData
-                        width: 38; height: 38; radius: 19
+                        width: Theme.optionTile; height: Theme.optionTile
+                        radius: Theme.optionTile / 2
                         color: modelData
                         scale: colorHover.containsMouse ? 1.15 : 1.0
-                        Behavior on scale { NumberAnimation { duration: 100 } }
-                        border.width: menu.currentColor === modelData ? 3 : 0
+                        Behavior on scale { NumberAnimation { duration: Theme.hoverDuration } }
+                        border.width: menu.currentColor === modelData ? Theme.strokeRing : 0
                         border.color: Theme.foreground
 
                         MouseArea {
@@ -238,6 +246,7 @@ Popup {
 
             RowLayout {
                 Layout.fillWidth: true
+                Layout.topMargin: Theme.spaceXs
                 Label {
                     text: "Прозорість"
                     color: Theme.mutedText
@@ -262,7 +271,10 @@ Popup {
                 }
             }
 
-            Label { text: "Клас"; color: Theme.mutedText; font.pixelSize: 12 }
+            Label {
+                text: "Клас"; color: Theme.mutedText; font.pixelSize: 12
+                Layout.topMargin: Theme.spaceXs
+            }
 
             DropDown {
                 id: classCombo
@@ -316,10 +328,12 @@ Popup {
                 }
             }
 
-            Rectangle { 
+            Rectangle {
                 Layout.fillWidth: true
-                height: 1
-                color: Theme.popupBorder 
+                Layout.topMargin: Theme.spaceXs
+                Layout.bottomMargin: Theme.spaceXs
+                height: Theme.strokeHairline
+                color: Theme.popupBorder
             }
 
             FlatButton {

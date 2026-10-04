@@ -5,11 +5,11 @@ ComboBox {
     id: box
 
     hoverEnabled: true
-    opacity: enabled ? 1 : 0.4
+    opacity: enabled ? 1 : Theme.disabledOpacity
 
     contentItem: Text {
-        leftPadding: 10
-        rightPadding: box.indicator.width + 14
+        leftPadding: Theme.spaceMd
+        rightPadding: box.indicator.width + Theme.spaceMd + Theme.spaceXs
         text: box.displayText
         font: box.font
         color: Theme.foreground
@@ -18,7 +18,7 @@ ComboBox {
     }
 
     indicator: Text {
-        x: box.width - width - 10
+        x: box.width - width - Theme.spaceMd
         y: (box.height - height) / 2
         text: "▾"
         color: Theme.mutedText
@@ -26,13 +26,13 @@ ComboBox {
     }
 
     background: Rectangle {
-        implicitWidth: 120
-        implicitHeight: 32
-        radius: 8
+        implicitWidth: Theme.dropdownMinWidth
+        implicitHeight: Theme.controlHeight
+        radius: Theme.radiusMd
         color: box.hovered || box.popup.visible ? Theme.hover : Theme.control
-        border.width: 1
+        border.width: Theme.strokeHairline
         border.color: box.popup.visible ? Theme.marked : Theme.border
-        Behavior on color { ColorAnimation { duration: 100 } }
+        Behavior on color { ColorAnimation { duration: Theme.hoverDuration } }
     }
 
     delegate: ItemDelegate {
@@ -40,8 +40,8 @@ ComboBox {
 
         width: box.popup.availableWidth
         highlighted: box.highlightedIndex === index
-        leftPadding: 8
-        rightPadding: 8
+        leftPadding: Theme.spaceSm
+        rightPadding: Theme.spaceSm
 
         contentItem: Text {
             text: box.textAt(parent.index)
@@ -51,8 +51,8 @@ ComboBox {
             elide: Text.ElideRight
         }
         background: Rectangle {
-            implicitHeight: 30
-            radius: 6
+            implicitHeight: Theme.listItemHeight
+            radius: Theme.radiusSm
             color: box.currentIndex === parent.index ? Theme.accent
                  : parent.highlighted ? Theme.hover
                                       : "transparent"
@@ -60,15 +60,16 @@ ComboBox {
     }
 
     popup: Popup {
-        y: box.height + 4
+        y: box.height + Theme.spaceXs
         width: box.width
-        implicitHeight: Math.min(contentItem.implicitHeight + 8, 240)
-        padding: 4
+        implicitHeight: Math.min(contentItem.implicitHeight + 2 * Theme.spaceXs,
+                                 Theme.dropdownListMaxHeight)
+        padding: Theme.spaceXs
 
         contentItem: ListView {
             clip: true
             implicitHeight: contentHeight
-            spacing: 2
+            spacing: Theme.spaceXs
             model: box.popup.visible ? box.delegateModel : null
             currentIndex: box.highlightedIndex
             ScrollIndicator.vertical: ScrollIndicator {}
@@ -76,8 +77,8 @@ ComboBox {
 
         background: Rectangle {
             color: Theme.popup
-            radius: 8
-            border.width: 1
+            radius: Theme.radiusMd
+            border.width: Theme.strokeHairline
             border.color: Theme.popupBorder
         }
     }

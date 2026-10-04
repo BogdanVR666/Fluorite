@@ -37,8 +37,8 @@ Popup {
 
     parent: Overlay.overlay
     anchors.centerIn: parent
-    width: 340
-    padding: 18
+    width: Theme.dialogWidth
+    padding: Theme.spaceLg
     modal: true
     focus: true
     closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
@@ -48,18 +48,18 @@ Popup {
         body.forceActiveFocus()
     }
 
-    Overlay.modal: Rectangle { color: Qt.alpha("black", 0.35) }
+    Overlay.modal: Rectangle { color: Theme.modalScrim }
 
     background: Rectangle {
         color: Theme.popup
-        radius: 10
-        border.width: 1
+        radius: Theme.radiusLg
+        border.width: Theme.strokeHairline
         border.color: Theme.popupBorder
     }
 
     contentItem: ColumnLayout {
         id: body
-        spacing: 12
+        spacing: Theme.spaceMd
         focus: true
 
         Keys.onReturnPressed: dialog.accept()
@@ -93,9 +93,10 @@ Popup {
             indicator: Rectangle {
                 x: rememberBox.leftPadding
                 y: (rememberBox.height - height) / 2
-                width: 16; height: 16; radius: 4
+                width: Theme.checkboxSize; height: Theme.checkboxSize
+                radius: Theme.radiusSm
                 color: rememberBox.checked ? Theme.accent : Theme.control
-                border.width: rememberBox.checked ? 0 : 1
+                border.width: rememberBox.checked ? 0 : Theme.strokeHairline
                 border.color: Theme.border
                 Text {
                     anchors.centerIn: parent
@@ -106,7 +107,7 @@ Popup {
                 }
             }
             contentItem: Text {
-                leftPadding: rememberBox.indicator.width + 8
+                leftPadding: rememberBox.indicator.width + Theme.spaceSm
                 text: rememberBox.text
                 font: rememberBox.font
                 color: Theme.mutedText
@@ -115,9 +116,9 @@ Popup {
         }
 
         RowLayout {
-            spacing: 8
+            spacing: Theme.spaceSm
             Layout.fillWidth: true
-            Layout.topMargin: 4
+            Layout.topMargin: Theme.spaceXs
 
             Item { Layout.fillWidth: true }
             FlatButton {

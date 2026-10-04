@@ -141,7 +141,7 @@ Rectangle {
 
     property int dragIndex: -1
     property real dragOffset: 0
-    readonly property real rowStep: 36 + classList.spacing
+    readonly property real rowStep: Theme.classRowHeight + classList.spacing
     readonly property int dropIndex: dragIndex === -1 ? -1
         : Math.max(0, Math.min(classes.length - 1,
                                dragIndex + Math.round(dragOffset / rowStep)))
@@ -320,7 +320,7 @@ Rectangle {
         { key: "dash",  glyph: "╌╌" },
         { key: "dot",   glyph: "┈┈" }
     ]
-    readonly property var widthDefs: [2.5, 4, 6]
+    readonly property var widthDefs: Theme.edgeWidths
     readonly property var dirDefs: [
         { key: false, glyph: "──" },
         { key: true,  glyph: "──▶" }
@@ -340,12 +340,12 @@ Rectangle {
 
     property string newShape: "circle"
     property string newLine: "solid"
-    property real newWidth: 2.5
+    property real newWidth: Theme.edgeWidths[0]
     property string newColor: Theme.nodePalette[0]
     property real newOpacity: 1.0
     property bool newDirected: false
 
-    width: 210
+    width: Theme.panelWidth
     color: Theme.panel
 
     MouseArea {
@@ -355,8 +355,8 @@ Rectangle {
 
     ColumnLayout {
         anchors.fill: parent
-        anchors.margins: 12
-        spacing: 10
+        anchors.margins: Theme.spaceMd
+        spacing: Theme.spaceSm
 
         Label {
             text: "Класи"
@@ -367,21 +367,21 @@ Rectangle {
 
         RowLayout {
             Layout.fillWidth: true
-            spacing: 6
+            spacing: Theme.spaceSm
             Repeater {
                 model: panel.familyDefs
                 delegate: Rectangle {
                     required property var modelData
                     Layout.fillWidth: true
-                    height: 30
-                    radius: 8
+                    height: Theme.listItemHeight
+                    radius: Theme.radiusMd
                     color: panel.family === modelData.key
                            ? Theme.accent
                            : famHover.containsMouse ? Theme.hover
                                                     : Theme.control
-                    border.width: panel.family === modelData.key ? 0 : 1
+                    border.width: panel.family === modelData.key ? 0 : Theme.strokeHairline
                     border.color: Theme.border
-                    Behavior on color { ColorAnimation { duration: 100 } }
+                    Behavior on color { ColorAnimation { duration: Theme.hoverDuration } }
 
                     Text {
                         anchors.centerIn: parent
@@ -405,7 +405,7 @@ Rectangle {
             Layout.fillWidth: true
             Layout.fillHeight: true
             clip: true
-            spacing: 4
+            spacing: Theme.spaceXs
             model: panel.classes
             interactive: panel.dragIndex === -1
 
@@ -422,7 +422,7 @@ Rectangle {
                     panel.renaming === modelData.name
 
                 width: classList.width
-                height: 36
+                height: Theme.classRowHeight
                 z: dragged ? 1 : 0
 
                 Rectangle {
@@ -434,14 +434,14 @@ Rectangle {
                         enabled: !slot.dragged
                         NumberAnimation { duration: 120; easing.type: Easing.OutQuad }
                     }
-                    radius: 8
+                    radius: Theme.radiusMd
                     color: panel.currentClass === slot.modelData.name
                            ? Theme.accent
                            : slot.dragged || rowHover.containsMouse
                              ? Theme.hover : "transparent"
-                    border.width: slot.dragged ? 1 : 0
+                    border.width: slot.dragged ? Theme.strokeHairline : 0
                     border.color: Theme.border
-                    Behavior on color { ColorAnimation { duration: 100 } }
+                    Behavior on color { ColorAnimation { duration: Theme.hoverDuration } }
 
                     MouseArea {
                         id: rowHover
@@ -459,9 +459,9 @@ Rectangle {
 
                     RowLayout {
                         anchors.fill: parent
-                        anchors.leftMargin: 2
-                        anchors.rightMargin: 10
-                        spacing: 6
+                        anchors.leftMargin: Theme.spaceXs
+                        anchors.rightMargin: Theme.spaceSm
+                        spacing: Theme.spaceSm
 
                         Text {
                             text: "⋮⋮"
@@ -477,7 +477,7 @@ Rectangle {
                             MouseArea {
                                 id: grip
                                 anchors.fill: parent
-                                anchors.margins: -4
+                                anchors.margins: -Theme.spaceXs
                                 hoverEnabled: true
                                 preventStealing: true
                                 cursorShape: slot.dragged ? Qt.ClosedHandCursor
@@ -562,7 +562,7 @@ Rectangle {
                             MouseArea {
                                 id: eye
                                 anchors.fill: parent
-                                anchors.margins: -4
+                                anchors.margins: -Theme.spaceXs
                                 hoverEnabled: true
                                 cursorShape: Qt.PointingHandCursor
                                 onClicked: backend.setClassHidden(
@@ -584,7 +584,13 @@ Rectangle {
                                                  panel.currentEdgeClass)
         }
 
-        Rectangle { Layout.fillWidth: true; height: 1; color: Theme.border }
+        Rectangle {
+            Layout.fillWidth: true
+            Layout.topMargin: Theme.spaceXs
+            Layout.bottomMargin: Theme.spaceXs
+            height: Theme.strokeHairline
+            color: Theme.border
+        }
 
         Label {
             text: panel.editing ? "Клас «" + panel.currentClass + "»"
@@ -615,20 +621,21 @@ Rectangle {
 
         GridLayout {
             columns: 4
-            columnSpacing: 6
+            columnSpacing: Theme.spaceSm
             visible: panel.nodesShown
             Repeater {
                 model: panel.shapeDefs
                 delegate: Rectangle {
                     required property var modelData
-                    width: 34; height: 34; radius: 8
+                    width: Theme.optionTileSm; height: Theme.optionTileSm
+                    radius: Theme.radiusMd
                     color: panel.newShape === modelData.key
                            ? Theme.accent
                            : shapeHover.containsMouse ? Theme.hover
                                                       : Theme.control
-                    border.width: panel.newShape === modelData.key ? 0 : 1
+                    border.width: panel.newShape === modelData.key ? 0 : Theme.strokeHairline
                     border.color: Theme.border
-                    Behavior on color { ColorAnimation { duration: 100 } }
+                    Behavior on color { ColorAnimation { duration: Theme.hoverDuration } }
 
                     Text {
                         anchors.centerIn: parent
@@ -686,20 +693,21 @@ Rectangle {
 
         GridLayout {
             columns: 3
-            columnSpacing: 6
+            columnSpacing: Theme.spaceSm
             visible: !panel.nodesShown
             Repeater {
                 model: panel.lineDefs
                 delegate: Rectangle {
                     required property var modelData
-                    width: 34; height: 34; radius: 8
+                    width: Theme.optionTileSm; height: Theme.optionTileSm
+                    radius: Theme.radiusMd
                     color: panel.newLine === modelData.key
                            ? Theme.accent
                            : lineHover.containsMouse ? Theme.hover
                                                      : Theme.control
-                    border.width: panel.newLine === modelData.key ? 0 : 1
+                    border.width: panel.newLine === modelData.key ? 0 : Theme.strokeHairline
                     border.color: Theme.border
-                    Behavior on color { ColorAnimation { duration: 100 } }
+                    Behavior on color { ColorAnimation { duration: Theme.hoverDuration } }
 
                     Text {
                         anchors.centerIn: parent
@@ -723,20 +731,21 @@ Rectangle {
 
         GridLayout {
             columns: 3
-            columnSpacing: 6
+            columnSpacing: Theme.spaceSm
             visible: !panel.nodesShown
             Repeater {
                 model: panel.widthDefs
                 delegate: Rectangle {
                     required property real modelData
-                    width: 34; height: 34; radius: 8
+                    width: Theme.optionTileSm; height: Theme.optionTileSm
+                    radius: Theme.radiusMd
                     color: panel.newWidth === modelData
                            ? Theme.accent
                            : widthHover.containsMouse ? Theme.hover
                                                       : Theme.control
-                    border.width: panel.newWidth === modelData ? 0 : 1
+                    border.width: panel.newWidth === modelData ? 0 : Theme.strokeHairline
                     border.color: Theme.border
-                    Behavior on color { ColorAnimation { duration: 100 } }
+                    Behavior on color { ColorAnimation { duration: Theme.hoverDuration } }
 
                     Rectangle {
                         anchors.centerIn: parent
@@ -761,20 +770,21 @@ Rectangle {
 
         GridLayout {
             columns: 2
-            columnSpacing: 6
+            columnSpacing: Theme.spaceSm
             visible: !panel.nodesShown
             Repeater {
                 model: panel.dirDefs
                 delegate: Rectangle {
                     required property var modelData
-                    width: 52; height: 34; radius: 8
+                    width: Theme.directionTileWidth; height: Theme.optionTileSm
+                    radius: Theme.radiusMd
                     color: panel.newDirected === modelData.key
                            ? Theme.accent
                            : dirHover.containsMouse ? Theme.hover
                                                     : Theme.control
-                    border.width: panel.newDirected === modelData.key ? 0 : 1
+                    border.width: panel.newDirected === modelData.key ? 0 : Theme.strokeHairline
                     border.color: Theme.border
-                    Behavior on color { ColorAnimation { duration: 100 } }
+                    Behavior on color { ColorAnimation { duration: Theme.hoverDuration } }
 
                     Text {
                         anchors.centerIn: parent
@@ -798,17 +808,18 @@ Rectangle {
 
         GridLayout {
             columns: 4
-            columnSpacing: 6
-            rowSpacing: 6
+            columnSpacing: Theme.spaceSm
+            rowSpacing: Theme.spaceSm
             Repeater {
                 model: Theme.nodePalette
                 delegate: Rectangle {
                     required property string modelData
-                    width: 34; height: 34; radius: 17
+                    width: Theme.optionTileSm; height: Theme.optionTileSm
+                    radius: Theme.optionTileSm / 2
                     color: modelData
                     scale: colorHover.containsMouse ? 1.15 : 1.0
-                    Behavior on scale { NumberAnimation { duration: 100 } }
-                    border.width: panel.newColor === modelData ? 3 : 0
+                    Behavior on scale { NumberAnimation { duration: Theme.hoverDuration } }
+                    border.width: panel.newColor === modelData ? Theme.strokeRing : 0
                     border.color: Theme.foreground
 
                     MouseArea {
@@ -833,7 +844,13 @@ Rectangle {
             onClicked: panel.submitNew()
         }
 
-        Rectangle { Layout.fillWidth: true; height: 1; color: Theme.border }
+        Rectangle {
+            Layout.fillWidth: true
+            Layout.topMargin: Theme.spaceXs
+            Layout.bottomMargin: Theme.spaceXs
+            height: Theme.strokeHairline
+            color: Theme.border
+        }
 
         Label {
             Layout.fillWidth: true
@@ -851,7 +868,8 @@ Rectangle {
         }
 
         RowLayout {
-            Layout.maximumHeight: 36
+            Layout.maximumHeight: Theme.controlHeight
+            spacing: Theme.spaceSm
             FlatButton {
                 text: "💾"
                 Layout.fillWidth: true

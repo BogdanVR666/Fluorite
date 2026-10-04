@@ -116,9 +116,9 @@ ApplicationWindow {
         background: Rectangle { color: Theme.statusBar }
         RowLayout {
             anchors.fill: parent
-            anchors.leftMargin: 12
-            anchors.rightMargin: 12
-            spacing: 12
+            anchors.leftMargin: Theme.spaceMd
+            anchors.rightMargin: Theme.spaceMd
+            spacing: Theme.spaceMd
 
             Label {
                 color: Theme.mutedText
@@ -224,9 +224,11 @@ ApplicationWindow {
             ShapePath {
                 fillColor: "transparent"
                 strokeColor: Theme.selection
-                strokeWidth: 3
+                strokeWidth: Theme.edgeDraftWidth
                 strokeStyle: ShapePath.DashLine
-                dashPattern: [2, 5 / 3]
+                dashPattern: Theme.edgeDraftDash.map(function (v) {
+                    return v / Theme.edgeDraftWidth
+                })
                 startX: root.edgeSrcX
                 startY: root.edgeSrcY
                 PathLine { x: root.edgeDragX; y: root.edgeDragY }
@@ -248,9 +250,9 @@ ApplicationWindow {
             y: root.bandRect.y
             width: root.bandRect.width
             height: root.bandRect.height
-            color: Qt.alpha(Theme.marked, 0.12)
+            color: Theme.markedFill
             border.color: Theme.marked
-            border.width: 1
+            border.width: Theme.strokeHairline
         }
 
         NodeMenu {
