@@ -1,9 +1,3 @@
-"""Збереження документа у JSON і відкриття, зокрема файлів старих версій.
-
-Формат 7 ділить файл на дві частини, як і сам документ:
-"graph" — FluoriteGraph (типи, вершини, ребра, гіперребра),
-"view" — вигляд (позиції, стилі, дизайн і порядок типів, групи на екрані).
-"""
 import json
 from dataclasses import asdict, fields
 
@@ -83,11 +77,10 @@ def graph_from_json(text: str) -> Document:
 
 
 def _restore_types(doc: Document, entries: dict, defaults: dict):
-    """entries: сім'я → [{"name", "design", "hidden"}] у порядку панелі."""
     for family, items in entries.items():
         if family not in ("node", "edge"):
             continue
-        if family in defaults:   # стандартний тип міг бути перейменований
+        if family in defaults:
             doc.rename_class(family, doc.view.default_type(family),
                              str(defaults[family]))
         for index, entry in enumerate(items):
@@ -109,7 +102,6 @@ def _from_v7(data: dict) -> Document:
     for entry in entries["edge"]:
         entry["design"] = {**(entry.get("design") or {}),
                            **directed.get(entry["name"], {})}
-    # типи, яких немає у вигляді (файл зібрано не редактором), — у кінець
     for family, key in (("node", "node_types"), ("edge", "edge_types")):
         listed = {e["name"] for e in entries[family]}
         entries[family] += [{"name": name, "design": directed.get(name, {})}
@@ -155,7 +147,7 @@ def _from_v7(data: dict) -> Document:
         gid = take(int(h["id"]))
         look = looks.get(str(gid))
         if look is None or not doc.has_node(int(look["node"])):
-            continue             # групу нема чим показати
+            continue
         doc.graph.hyperadd(Hyperedge(
             str(h.get("name", "")), h.get("description"),
             {int(c) for c in h.get("children", []) if doc.has_node(int(c))},
@@ -171,8 +163,6 @@ def _from_v7(data: dict) -> Document:
     return doc
 
 
-# ---- файли версій 1–6 (до FluoriteGraph) --------------------------------
-
 def _upgrade_v1(data: dict) -> dict:
     data["classes"] = {"node": [
         {"name": c["name"],
@@ -187,8 +177,6 @@ def _upgrade_v1(data: dict) -> dict:
 
 
 def _from_legacy(data: dict, version: int) -> Document:
-    """Старий формат: id вершин зберігаються, ребра й групи отримують нові
-    (раніше в них або не було id, або вони перетинались з id вершин)."""
     if version < 2:
         data = _upgrade_v1(data)
     doc = Document()
@@ -223,7 +211,7 @@ def _from_legacy(data: dict, version: int) -> Document:
         group_number = max(group_number, int(g["id"]) + 1)
         nid = g.get("node")
         label = str(g.get("label", "")) or f"Група {g['id']}"
-        if nid is None:          # ще старіше: група без метавершини
+        if nid is None:
             nid = doc.add_node(float(g.get("x", 0.0)), float(g.get("y", 0.0)),
                                None, name=label)
         nid = int(nid)

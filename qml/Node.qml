@@ -14,15 +14,13 @@ Item {
     required property string nodeClass
     required property string nodeDescription
     required property real nodeOpacity
-    required property bool nodeSelected   // входить у виділення
-    required property bool nodeHidden     // зараз не видно (групи)
-    required property bool isGroup        // метавершина групи
-    required property int memberCount     // вершин у її групі
+    required property bool nodeSelected
+    required property bool nodeHidden
+    required property bool isGroup
+    required property int memberCount
 
-    property string edgeClass      // клас ребер для Ctrl+Shift+клік
+    property string edgeClass
 
-    // Shift — додати до виділення чи прибрати з нього;
-    // Ctrl+Shift — з'єднати виділені з цією вершиною.
     function tap(modifiers) {
         var chord = Qt.ControlModifier | Qt.ShiftModifier
         if ((modifiers & chord) === chord)
@@ -31,7 +29,6 @@ Item {
             backend.selectNode(nodeId, (modifiers & Qt.ShiftModifier) !== 0)
     }
 
-    // Тягнуть виділену разом з іншими — їдуть усі виділені.
     function moveTo(cx, cy) {
         if (nodeSelected && backend.selectionCount > 1)
             backend.moveSelectionTo(nodeId, cx, cy)
@@ -39,7 +36,7 @@ Item {
             backend.moveNode(nodeId, cx, cy)
     }
 
-    property bool editing: false   // підпис редагується на місці
+    property bool editing: false
 
     function commitLabel(text) {
         if (!editing)
@@ -64,10 +61,9 @@ Item {
         hoverArea.containsMouse ? Theme.foreground
                                 : Qt.alpha(Theme.foreground, 0.78)
 
-    // будь-яка форма, крім кола, малюється квадратом
     readonly property bool round: effShape === "circle"
 
-    Rectangle {   // рамка виділення
+    Rectangle {
         visible: node.nodeSelected
         anchors.centerIn: parent
         width: node.width + 12
@@ -167,7 +163,6 @@ Item {
                 selectAll()
                 forceActiveFocus()
             }
-            // інакше Escape забере Shortcut вікна (скидання виділення)
             Keys.onShortcutOverride: function (event) {
                 event.accepted = event.key === Qt.Key_Escape
             }
@@ -246,12 +241,11 @@ Item {
     MouseArea {
         id: hoverArea
         anchors.fill: parent
-        enabled: !node.editing   // клацання йдуть у поле вводу
+        enabled: !node.editing
         hoverEnabled: true
         cursorShape: Qt.SizeAllCursor
         drag.target: node
 
-        // MouseArea сама фокус не бере, а поле вводу має його втратити
         onPressed: node.forceActiveFocus()
         onClicked: function (mouse) { node.tap(mouse.modifiers) }
         onDoubleClicked: node.editing = true

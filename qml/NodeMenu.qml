@@ -5,14 +5,14 @@ import QtQuick.Layouts
 Popup {
     id: menu
 
-    property int targetId: -1          // яку вершину редагуємо/видаляємо
+    property int targetId: -1
     property string targetLabel: ""
     property string currentDescription: ""
     property string currentShape: "circle"
     property string currentColor: Theme.nodePalette[0]
     property real currentOpacity: 1.0
-    property string currentClass: ""   // клас цієї вершини
-    property var classes: []           // [{name, shape, color, opacity, count}]
+    property string currentClass: ""
+    property var classes: []
 
     property int selectionCount: 1
     readonly property bool group: selectionCount > 1
@@ -26,11 +26,8 @@ Popup {
 
     readonly property var classNames: classes.map(function (c) { return c.name })
 
-    property string edgeClass: ""      // клас ребер для «З'єднати…»
+    property string edgeClass: ""
 
-    // Перечитати вершину з бекенда: після кожної зміни меню показує те, що
-    // справді сталося. Вершини вже нема — закриває меню й повертає false.
-    // Текстові поля не чіпає, щоб не збивати курсор посеред вводу.
     function refresh() {
         var info = backend.nodeInfo(targetId)
         if (!info.klass) {
@@ -74,8 +71,8 @@ Popup {
     closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
 
     readonly property var shapeDefs: [
-        { key: "circle",   glyph: "\u25CF" },  // ●
-        { key: "square",   glyph: "\u25A0" }  // ■
+        { key: "circle",   glyph: "\u25CF" },
+        { key: "square",   glyph: "\u25A0" }
     ]
     readonly property var colorPalette: Theme.nodePalette
 

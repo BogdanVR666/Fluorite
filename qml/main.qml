@@ -28,7 +28,7 @@ ApplicationWindow {
     }
 
     property bool banding: false
-    property bool bandAdditive: false      // Shift — додавати до наявного
+    property bool bandAdditive: false
     property real bandX0: 0
     property real bandY0: 0
     property real bandX1: 0
@@ -92,7 +92,7 @@ ApplicationWindow {
         backend.addNode(mx, my, classPanel.currentNodeClass)
     }
 
-    Shortcut {   // без виділення Backspace належить панелі класів
+    Shortcut {
         sequences: [StandardKey.Delete, "Backspace"]
         enabled: backend.selectionCount > 0
         onActivated: backend.removeSelection()
@@ -101,7 +101,6 @@ ApplicationWindow {
         sequence: "Escape"
         onActivated: backend.clearSelection()
     }
-    // У текстовому полі Ctrl+Z скасовує набір тексту, а не зміни графа
     Shortcut {
         sequence: "Ctrl+Z"
         enabled: classPanel.keyboard
@@ -123,7 +122,7 @@ ApplicationWindow {
 
             Label {
                 color: Theme.mutedText
-                text: backend.stats   // рахує NetworkX на боці Python
+                text: backend.stats
             }
 
             Item { Layout.fillWidth: true }
@@ -159,7 +158,7 @@ ApplicationWindow {
             acceptedButtons: Qt.LeftButton | Qt.RightButton
 
             onPressed: function (mouse) {
-                workspace.forceActiveFocus()   // завершує редагування підпису
+                workspace.forceActiveFocus()
                 if (mouse.button === Qt.LeftButton) {
                     root.bandAdditive =
                         (mouse.modifiers & Qt.ShiftModifier) !== 0
@@ -227,7 +226,7 @@ ApplicationWindow {
                 strokeColor: Theme.selection
                 strokeWidth: 3
                 strokeStyle: ShapePath.DashLine
-                dashPattern: [2, 5 / 3]   // 6 і 5 px у одиницях товщини
+                dashPattern: [2, 5 / 3]
                 startX: root.edgeSrcX
                 startY: root.edgeSrcY
                 PathLine { x: root.edgeDragX; y: root.edgeDragY }

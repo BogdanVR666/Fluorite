@@ -1,7 +1,6 @@
 import QtQuick
 import QtQuick.Controls
 
-// Багаторядковий відповідник LineField: той самий прозорий вигляд.
 TextArea {
     id: area
 

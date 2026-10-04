@@ -36,7 +36,7 @@ def _point_segment_dist2(px: float, py: float,
     return dx * dx + dy * dy
 
 
-_BEND_STEP = 14.0   # відстань між сусідніми паралельними ребрами, px
+_BEND_STEP = 14.0
 
 
 def _visual_owners(doc: Document) -> dict[int, int | None]:
@@ -44,8 +44,6 @@ def _visual_owners(doc: Document) -> dict[int, int | None]:
 
 
 def _edge_bends(doc: Document) -> dict[int, float]:
-    """Вигин кожного з паралельних ребер (між тими самими вершинами на
-    екрані), щоб вони не злипались в одну лінію."""
     owners = _visual_owners(doc)
     pairs: dict[tuple[int, int], list[tuple[int, int]]] = {}
     for eid, u, v in doc.shown_edges():
@@ -69,9 +67,9 @@ def _bend_control(x1: float, y1: float, x2: float, y2: float,
                   bend: float) -> tuple[float, float]:
     dx, dy = x2 - x1, y2 - y1
     d = math.hypot(dx, dy)
-    if d < 1e-6:                       # вершини збіглись — дуги немає
+    if d < 1e-6:
         return x1, y1
-    nx_, ny_ = -dy / d, dx / d         # нормаль ліворуч від напряму
+    nx_, ny_ = -dy / d, dx / d
     return ((x1 + x2) / 2.0 + nx_ * 2.0 * bend,
             (y1 + y2) / 2.0 + ny_ * 2.0 * bend)
 
@@ -92,10 +90,10 @@ def _point_bend_dist2(px: float, py: float, x1: float, y1: float,
     return best
 
 
-_NODE_R = 22.0                          # радіус вершини (Node.qml: 44px)
-_BARB_BASE = 7.0                        # довжина вусика = base + k·товщина:
-_BARB_K = 1.8                           # у товстої лінії вістря має рости
-_BARB_COS = math.cos(math.radians(26))  # 26° — половина кута розкриття
+_NODE_R = 22.0
+_BARB_BASE = 7.0
+_BARB_K = 1.8
+_BARB_COS = math.cos(math.radians(26))
 _BARB_SIN = math.sin(math.radians(26))
 
 
@@ -106,14 +104,12 @@ def _barb_len(width: float) -> float:
 def _fit_arrow(line: QLineF, left: QLineF, right: QLineF, blen: float):
     dx, dy = line.x2() - line.x1(), line.y2() - line.y1()
     d = math.hypot(dx, dy)
-    if d <= _NODE_R:            # вершини налізли одна на одну
-        # вироджуємо вусики в точку під ціллю, щоб не лишити артефакт
+    if d <= _NODE_R:
         left.setLine(line.x2(), line.y2(), line.x2(), line.y2())
         right.setLine(line.x2(), line.y2(), line.x2(), line.y2())
         return
     ux, uy = dx / d, dy / d
     tx, ty = line.x2() - ux * _NODE_R, line.y2() - uy * _NODE_R
-    # вектор назад (-u), повернутий на ±кут розкриття
     lx, ly = -ux * _BARB_COS + uy * _BARB_SIN, -ux * _BARB_SIN - uy * _BARB_COS
     rx, ry = -ux * _BARB_COS - uy * _BARB_SIN, ux * _BARB_SIN - uy * _BARB_COS
     left.setLine(tx, ty, tx + lx * blen, ty + ly * blen)
@@ -132,17 +128,15 @@ class NodesModel(QAbstractListModel):
     DescriptionRole = Qt.UserRole + 10
     OpacityRole = Qt.UserRole + 11
     SelectedRole = Qt.UserRole + 12
-    HiddenRole = Qt.UserRole + 13    # вершину зараз не видно (групи)
-    IsGroupRole = Qt.UserRole + 14   # вершина — метавершина групи
-    MembersRole = Qt.UserRole + 15   # скільки вершин у її групі
+    HiddenRole = Qt.UserRole + 13
+    IsGroupRole = Qt.UserRole + 14
+    MembersRole = Qt.UserRole + 15
 
     def __init__(self, doc: Document, parent=None):
         super().__init__(parent)
         self._doc = doc
-        self._ids: list[int] = []          # порядок рядків моделі
-        self._rows: dict[int, int] = {}    # nodeId → рядок, O(1) для row_of
-        # Виділені вершини. Живуть тут, а не в QML, щоб делегат читав свій
-        # стан роллю за O(1) — інакше кожен із них шукав би себе в масиві.
+        self._ids: list[int] = []
+        self._rows: dict[int, int] = {}
         self._selected: set[int] = set()
 
     def rowCount(self, parent=QModelIndex()) -> int:
@@ -218,7 +212,7 @@ class NodesModel(QAbstractListModel):
         self.beginRemoveRows(QModelIndex(), row, row)
         self._ids.pop(row)
         del self._rows[nid]
-        for i in range(row, len(self._ids)):   # рядки нижче зсунулись
+        for i in range(row, len(self._ids)):
             self._rows[self._ids[i]] = i
         self._selected.discard(nid)
         self.endRemoveRows()
@@ -244,7 +238,7 @@ class NodesModel(QAbstractListModel):
         self.beginResetModel()
         self._ids = [nid for nid in self._ids if nid not in ids]
         self._rows = {nid: i for i, nid in enumerate(self._ids)}
-        self._selected -= ids     # на місці: множину поділено з бекендом
+        self._selected -= ids
         self.endResetModel()
 
     def reset_with(self, ids):
@@ -263,12 +257,6 @@ class NodesModel(QAbstractListModel):
 
 
 def _step(merge=None):
-    """Слот змінює граф: після нього стан іде в історію одним кроком.
-
-    merge(*args) дає ключ неперервної дії (перетягування, повзунок, набір
-    тексту). Виклики з тим самим ключем зливаються в один крок; він
-    записується перед іншою дією, перед Ctrl+Z або після паузи.
-    """
     def wrap(fn):
         @functools.wraps(fn)
         def slot(self, *args):
@@ -287,16 +275,16 @@ def _step(merge=None):
 
 
 class GraphBackend(QObject):
-    graphChanged = Signal()     # структура: шар ребер перемальовується
-    edgesChanged = Signal()     # стиль/підсвітка ребер — перемалювання
-    nodeMoved = Signal(int, float, float)   # рух вершини: (nid, x, y)
-    classesChanged = Signal()   # змінились типи вершин чи ребер
-    selectionChanged = Signal() # змінився набір виділених вершин
-    summaryChanged = Signal()   # статистика й лічильники класів (з паузою)
-    statusChanged = Signal()    # повідомлення в статус-рядку
+    graphChanged = Signal()
+    edgesChanged = Signal()
+    nodeMoved = Signal(int, float, float)
+    classesChanged = Signal()
+    selectionChanged = Signal()
+    summaryChanged = Signal()
+    statusChanged = Signal()
 
-    _SUMMARY_MS = 100           # не частіше 10 оновлень зведення на секунду
-    _IDLE_MS = 600              # пауза, що завершує неперервну дію
+    _SUMMARY_MS = 100
+    _IDLE_MS = 600
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -310,7 +298,7 @@ class GraphBackend(QObject):
         self._status = ""
         self._history = history.History()
         self._history.reset(self._snapshot())
-        self._pending = None        # ключ неперервної дії, ще не в історії
+        self._pending = None
         self._idle = QTimer(self)
         self._idle.setSingleShot(True)
         self._idle.setInterval(self._IDLE_MS)
@@ -320,13 +308,11 @@ class GraphBackend(QObject):
         return history.snapshot(self._doc)
 
     def _commit(self):
-        """Записати в історію все, що змінилось від попереднього кроку."""
         self._pending = None
         self._idle.stop()
         self._history.record(self._snapshot())
 
     def _travel(self, change: dict, side: int):
-        """Перевести граф у стан side кроку change і оновити інтерфейс."""
         added, removed = history.apply(self._doc, change, side)
         if removed:
             self._model.remove_nodes(removed)
@@ -334,10 +320,10 @@ class GraphBackend(QObject):
             self._model.append_node(nid)
         roles = list(self._model.roleNames())
         for nid, pair in change.get("nodes", {}).items():
-            if None not in pair:          # вершина лишилась, але змінилась
+            if None not in pair:
                 self._model.notify_row(nid, roles)
         for pair in change.get("edges", {}).values():
-            for rec in pair:              # у кінців змінився ступінь
+            for rec in pair:
                 if rec is None:
                     continue
                 for nid in (rec[0].node_in, rec[0].node_out):
@@ -348,7 +334,6 @@ class GraphBackend(QObject):
                                    + [NodesModel.HiddenRole])
         if "groups" in change:
             self._model.notify_all(self._GROUP_ROLES)
-        # виділення не в історії: лише прибрати з нього зниклі вершини
         self._selected.intersection_update(self._doc.type_of.keys())
         self._selection_changed()
         self.graphChanged.emit()
@@ -408,7 +393,6 @@ class GraphBackend(QObject):
 
     @Property(str, notify=statusChanged)
     def status(self):
-        """Повідомлення останньої дії, а без нього — підказка з жестами."""
         return self._status or self._HINT
 
     def _set_status(self, msg: str):
@@ -421,11 +405,9 @@ class GraphBackend(QObject):
         return len(self._selected)
 
     def _selection_changed(self):
-        """Штовхнути модель і QML після зміни self._selected."""
         self._model.set_selected(self._selected)
         self.selectionChanged.emit()
 
-    # ---- виділення ----------------------------------------------------
 
     @Slot(int, bool)
     def selectNode(self, nid: int, additive: bool):
@@ -457,7 +439,7 @@ class GraphBackend(QObject):
     @Slot()
     def clearSelection(self):
         if not self._selected:
-            return   # статус не чіпаємо: тут, напр., «Видалено вершин: N»
+            return
         self._selected.clear()
         self._selection_changed()
         self._set_status("")
@@ -466,7 +448,6 @@ class GraphBackend(QObject):
     def isSelected(self, nid: int) -> bool:
         return nid in self._selected
 
-    # ---- типи (класи) -------------------------------------------------
 
     @Slot(str, result="QVariantList")
     def classList(self, family: str):
@@ -500,7 +481,7 @@ class GraphBackend(QObject):
                                     NodesModel.ColorRole,
                                     NodesModel.OpacityRole])
         else:
-            self.edgesChanged.emit()   # кеш EdgeLayer стане недійсним
+            self.edgesChanged.emit()
         self.classesChanged.emit()
 
     @Slot(str, str, str, result=bool)
@@ -545,7 +526,7 @@ class GraphBackend(QObject):
         if family == "node":
             self._model.notify_all([NodesModel.HiddenRole])
             self._drop_hidden_from_selection()
-        self.graphChanged.emit()          # ребра до схованих теж зникають
+        self.graphChanged.emit()
         self.classesChanged.emit()
 
     @Slot(str, str, int)
@@ -556,7 +537,6 @@ class GraphBackend(QObject):
     _CLASS_ROLES = [NodesModel.ShapeRole, NodesModel.ColorRole,
                     NodesModel.OpacityRole, NodesModel.ClassRole]
 
-    # ---- вершини ------------------------------------------------------
 
     @Slot(float, float, str)
     @_step()
@@ -582,8 +562,6 @@ class GraphBackend(QObject):
     def moveNode(self, nid: int, x: float, y: float):
         self._doc.move_node(nid, x, y)
         self._model.notify_row(nid, [NodesModel.XRole, NodesModel.YRole])
-        # структура не змінилась — статистику й класи не перераховуємо,
-        # а шар ребер оновлює лише лінії цієї вершини
         self.nodeMoved.emit(nid, x, y)
 
     @Slot(int, float, float)
@@ -606,8 +584,8 @@ class GraphBackend(QObject):
         if not self._doc.has_node(nid):
             return
         neighbors = self._doc.remove_node(nid)
-        self._model.remove_node(nid)      # і викидає nid із self._selected
-        for nb in neighbors:              # у сусідів змінився ступінь
+        self._model.remove_node(nid)
+        for nb in neighbors:
             if self._model.has_node(nb):
                 self._model.notify_row(nb, [NodesModel.DegreeRole])
 
@@ -632,17 +610,16 @@ class GraphBackend(QObject):
         self._drain_orphans()
         if was_selected:
             self.selectionChanged.emit()
-        # членство і видимість могли змінитись (розпуск груп)
         self._model.notify_all(self._GROUP_ROLES)
         self._structure_changed()
 
     @Slot(float, float, result=int)
     def nodeAt(self, x: float, y: float) -> int:
-        hit2 = 26.0 * 26.0                # радіус влучання (вершина ~44px)
+        hit2 = 26.0 * 26.0
         best, best_d = -1, hit2
         for nid, look in self._doc.view.nodes.items():
             if self._doc.visual_owner(nid) != nid:
-                continue                  # зараз не видно (групи)
+                continue
             dx, dy = look.x - x, look.y - y
             d = dx * dx + dy * dy
             if d <= best_d:
@@ -655,8 +632,8 @@ class GraphBackend(QObject):
         if not doc.has_node(nid):
             return {}
         node, look, style = doc.node(nid), doc.look(nid), doc.node_style(nid)
-        gid = doc.member_of.get(nid, -1)     # чий вона член
-        own = doc.group_of_node.get(nid, -1)  # чия метавершина
+        gid = doc.member_of.get(nid, -1)
+        own = doc.group_of_node.get(nid, -1)
         return {"label": node.name, "description": node.description,
                 "shape": style.shape, "color": style.color,
                 "opacity": style.opacity, "x": look.x, "y": look.y,
@@ -678,12 +655,11 @@ class GraphBackend(QObject):
         self._set_status(f"Видалено вершин: {n}")
 
     def _nodes_removed(self, doomed: set[int], touched: set[int]):
-        """Донести до моделі видалення вершин doomed із документа."""
         was_selected = bool(self._selected & doomed)
         if doomed:
-            self._model.remove_nodes(doomed)  # і викидає їх із self._selected
-        self._drain_orphans()                 # метавершини розчинених груп
-        for nid in touched:                   # у них змінився ступінь
+            self._model.remove_nodes(doomed)
+        self._drain_orphans()
+        for nid in touched:
             if self._model.has_node(nid):
                 self._model.notify_row(nid, [NodesModel.DegreeRole])
         if was_selected:
@@ -722,7 +698,6 @@ class GraphBackend(QObject):
             self._doc.set_node_style(nid, opacity=opacity)
         self._model.notify_all([NodesModel.OpacityRole])
 
-    # ---- ребра --------------------------------------------------------
 
     def _bulk_add_edges(self, pairs, edge_class: str) -> int:
         added = self._doc.bulk_add_edges(pairs, edge_class)
@@ -792,18 +767,16 @@ class GraphBackend(QObject):
     @Slot(int, str, result=bool)
     @_step()
     def setEdgeClass(self, eid: int, new_name: str) -> bool:
-        # False, зокрема, коли пара вже зайнята ребром цільового класу
         if not self._doc.set_edge_class(eid, new_name):
             self._set_status(f"Ребро класу «{new_name}» між цими вершинами "
                              "вже існує")
             return False
-        self._structure_changed()      # перемальовує ребра й лічильники
+        self._structure_changed()
         return True
 
     @Slot(float, float, result=int)
     def edgeAt(self, x: float, y: float) -> int:
-        """id ребра під точкою або -1."""
-        hit2 = 7.0 * 7.0                  # допуск влучання у лінію, px^2
+        hit2 = 7.0 * 7.0
         doc = self._doc
         owners = _visual_owners(doc)
         bends = _edge_bends(doc)
@@ -811,7 +784,7 @@ class GraphBackend(QObject):
         for eid, a, b in doc.shown_edges():
             oa, ob = owners[a], owners[b]
             if oa is None or ob is None or oa == ob:
-                continue                  # ребра зараз не видно
+                continue
             la, lb = doc.look(oa), doc.look(ob)
             bend = bends.get(eid, 0.0)
             if bend:
@@ -867,8 +840,6 @@ class GraphBackend(QObject):
     @Slot(int, str)
     @_step()
     def connectSelectionTo(self, nid: int, edge_class: str):
-        """Ребра від усіх виділених до nid, потім nid стає виділеною.
-        Виділена nid натомість знімається з виділення, без ребер."""
         if not self._doc.has_node(nid):
             self._set_status("")
             return
@@ -883,7 +854,6 @@ class GraphBackend(QObject):
         self._selection_changed()
         self._set_status(f"Додано ребер: {added}" if added else "")
 
-    # ---- групи --------------------------------------------------------
 
     def _groups_changed(self):
         self._model.notify_all(self._GROUP_ROLES)
@@ -906,11 +876,11 @@ class GraphBackend(QObject):
             return
         meta = doc.group_node(gid)
         if not self._model.has_node(meta):
-            self._model.append_node(meta)   # свіжа метавершина
+            self._model.append_node(meta)
         doc.set_collapsed(gid, True)
         self._model.notify_row(meta, [NodesModel.XRole, NodesModel.YRole])
         self._drop_hidden_from_selection()
-        self._drain_orphans()          # метавершини поглинутих груп
+        self._drain_orphans()
         self._groups_changed()
         self._set_status(f"Групу «{doc.node(meta).name}» згорнуто "
                          f"(вершин: {len(doc.group_members(gid))})")
@@ -921,7 +891,6 @@ class GraphBackend(QObject):
         if not self._doc.set_collapsed(gid, collapsed):
             return
         if collapsed:
-            # метавершина стала в центроїд членів
             self._model.notify_row(self._doc.group_node(gid),
                                    [NodesModel.XRole, NodesModel.YRole])
         self._drop_hidden_from_selection()
@@ -935,19 +904,18 @@ class GraphBackend(QObject):
             return
         was_selected = node in self._selected
         self._remove_one(node)
-        self._drain_orphans()          # батьківська група могла розчинитись
+        self._drain_orphans()
         if was_selected:
             self.selectionChanged.emit()
         self._model.notify_all(self._GROUP_ROLES)
         self._structure_changed()
 
-    # ---- документ цілком ----------------------------------------------
 
     @Slot()
     @_step()
     def clear(self):
         self._doc.clear()
-        self._model.reset_all()      # чистить і виділення
+        self._model.reset_all()
         self.selectionChanged.emit()
         self.graphChanged.emit()
         self._summary_now()
@@ -975,17 +943,16 @@ class GraphBackend(QObject):
             return
 
         try:
-            # документ мутується лише після успішного розбору всього файла
             new_doc = storage.graph_from_json(text)
         except (ValueError, KeyError, TypeError) as e:
             self._set_status(f"Не вдалося прочитати граф: {e}")
             return
 
         self._doc.adopt(new_doc)
-        self._model.reset_with(self._doc.type_of)   # чистить і виділення
+        self._model.reset_with(self._doc.type_of)
         self._pending = None
         self._idle.stop()
-        self._history.reset(self._snapshot())       # новий файл — нова історія
+        self._history.reset(self._snapshot())
         self.selectionChanged.emit()
         self.classesChanged.emit()
         self.graphChanged.emit()
@@ -1000,9 +967,9 @@ class EdgeLayer(QQuickPaintedItem):
 
     _DASHES = {"dash": (8.0, 6.0), "dot": (2.0, 5.0)}
 
-    _FAST_EDGES = 300    # від скількох ребер вмикається швидкий режим
-    _BURST_GAP = 0.1     # с між оновленнями, щоб вважати їх шквалом
-    _REFINE_MS = 150     # пауза тиші перед чистовим кадром
+    _FAST_EDGES = 300
+    _BURST_GAP = 0.1
+    _REFINE_MS = 150
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -1011,20 +978,14 @@ class EdgeLayer(QQuickPaintedItem):
         self._arrows: dict[tuple, list[QLineF]] = {}
         self._curves: dict[tuple, list[tuple[QLineF, float]]] = {}
         self._incident: dict[int, list[tuple[QLineF, bool, tuple | None]]] = {}
-        # Під час перетягування рухаються лише ребра, інцидентні тягнутим
-        # вершинам. Решту растеризуємо один раз у _static і далі щокадру
-        # лише підкладаємо готову картинку, домальовуючи рухомі з _dyn_*.
-        self._moving: set[int] = set()       # вершини, які зараз тягнуть
-        self._static: QImage | None = None   # кеш нерухомих ребер
+        self._moving: set[int] = set()
+        self._static: QImage | None = None
         self._dyn_groups: dict[tuple, list[QLineF]] = {}
         self._dyn_arrows: dict[tuple, list[QLineF]] = {}
         self._dyn_curves: dict[tuple, list[tuple[QLineF, float]]] = {}
-        self._pens: dict[tuple, QPen] = {}   # перо за стилем: QPen недешевий
-        self._fast = False           # поточні кадри — швидкі (шквал)
-        self._low_res = False        # текстура зараз зменшена
-        # Малюємо у власний ARGB32-буфер: цільова текстура елемента має
-        # формат RGBA8888, у якому растеризація ліній QPainter у рази
-        # повільніша; готовий буфер лише блітиться в текстуру.
+        self._pens: dict[tuple, QPen] = {}
+        self._fast = False
+        self._low_res = False
         self._buffer: QImage | None = None
         self._last_request = 0.0
         self._refine = QTimer(self)
@@ -1062,7 +1023,7 @@ class EdgeLayer(QQuickPaintedItem):
     def _node_moved(self, nid: int, x: float, y: float):
         if nid not in self._moving:
             self._moving.add(nid)
-            self._static = None    # набір рухомих змінився — кеш застарів
+            self._static = None
         if self._groups is not None:
             point = QPointF(x, y)
             for line, at_p1, barbs in self._incident.get(nid, ()):
@@ -1070,7 +1031,7 @@ class EdgeLayer(QQuickPaintedItem):
                     line.setP1(point)
                 else:
                     line.setP2(point)
-                if barbs is not None:   # стрілка залежить від обох кінців
+                if barbs is not None:
                     _fit_arrow(line, *barbs)
         self._enter_fast()
         self._last_request = monotonic()
@@ -1078,11 +1039,11 @@ class EdgeLayer(QQuickPaintedItem):
 
     def _refine_pass(self):
         self._fast = False
-        self._moving.clear()        # перетягування скінчилось
+        self._moving.clear()
         self._static = None
         if self._low_res:
             self._low_res = False
-            self.setTextureSize(QSize())    # авто: розмір елемента × DPR
+            self.setTextureSize(QSize())
         self.update()
 
     def _source(self):
@@ -1097,7 +1058,7 @@ class EdgeLayer(QQuickPaintedItem):
                 self._backend.edgesChanged.disconnect(self._mark_dirty)
                 self._backend.nodeMoved.disconnect(self._node_moved)
             except RuntimeError:
-                pass    # бекенд уже знищується разом із застосунком
+                pass
         self._backend = backend
         if backend is not None:
             backend.graphChanged.connect(self._mark_dirty)
@@ -1120,7 +1081,7 @@ class EdgeLayer(QQuickPaintedItem):
         for eid, a, b in doc.shown_edges():
             oa, ob = owners[a], owners[b]
             if oa is None or ob is None or oa == ob:
-                continue    # ребра зараз не видно
+                continue
             na, nb = doc.look(oa), doc.look(ob)
             directed = doc.edge_directed(eid)
             style = doc.edge_style(eid)
@@ -1143,7 +1104,7 @@ class EdgeLayer(QQuickPaintedItem):
         self._arrows = arrows
         self._curves = curves
         self._incident = incident
-        self._static = None      # старі QLineF більше не в кешах
+        self._static = None
         self._pens.clear()
 
     def _body_pen(self, color: str, width: float, line: str) -> QPen:
@@ -1202,8 +1163,6 @@ class EdgeLayer(QQuickPaintedItem):
                 p.drawLines(barbs)
 
     def _build_static(self, dw: int, dh: int, s: float):
-        """Розкладає ребра на рухомі (_dyn_*) та нерухомі й растеризує
-        нерухомі в картинку _static розміру буфера."""
         dyn_ids: set[int] = set()
         for nid in self._moving:
             for line, _, barbs in self._incident.get(nid, ()):
@@ -1212,8 +1171,6 @@ class EdgeLayer(QQuickPaintedItem):
                     dyn_ids.add(id(barbs[0]))
                     dyn_ids.add(id(barbs[1]))
 
-        # Списки містять ті самі QLineF, що їх _node_moved рухає на місці,
-        # тож розбиття лишається чинним протягом усього перетягування.
         def split(d: dict, ident):
             stat, dyn = {}, {}
             for key, items in d.items():
@@ -1235,7 +1192,6 @@ class EdgeLayer(QQuickPaintedItem):
         img = QImage(dw, dh, QImage.Format.Format_ARGB32_Premultiplied)
         img.fill(0)
         p = QPainter(img)
-        # кеш малюється один раз на перетягування — завжди з АА
         p.setRenderHint(QPainter.RenderHint.Antialiasing, True)
         if abs(s - 1.0) > 0.001:
             p.scale(s, s)
@@ -1260,7 +1216,6 @@ class EdgeLayer(QQuickPaintedItem):
         item_w = self.width()
         s = dw / item_w if item_w > 0 else 1.0
 
-        # кеш нерухомих ребер має сенс лише коли їх багато
         cached = bool(self._moving) and n_edges >= self._FAST_EDGES
         if cached and (self._static is None
                        or self._static.width() != dw
@@ -1279,7 +1234,6 @@ class EdgeLayer(QQuickPaintedItem):
         p.setRenderHint(QPainter.RenderHint.Antialiasing, not fast)
 
         if cached:
-            # Source: картинка замінює вміст буфера, окремий fill не треба
             p.setCompositionMode(
                 QPainter.CompositionMode.CompositionMode_Source)
             p.drawImage(0, 0, self._static)

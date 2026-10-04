@@ -6,10 +6,10 @@ import QtQuick.Layouts
 Rectangle {
     id: panel
 
-    property var nodeClasses: []       // [{name, count, shape, color, opacity}]
-    property var edgeClasses: []       // [{name, count, color, width, line, directed}]
-    property string currentNodeClass: "Звичайна"   // клас для НОВИХ вершин
-    property string currentEdgeClass: "Звичайне"   // клас для НОВИХ ребер
+    property var nodeClasses: []
+    property var edgeClasses: []
+    property string currentNodeClass: "Звичайна"
+    property string currentEdgeClass: "Звичайне"
 
     property string family: "node"
     readonly property bool nodesShown: family === "node"
@@ -19,7 +19,6 @@ Rectangle {
 
     readonly property bool editing: currentClass !== ""
 
-    // Зробити name поточним класом показаної сім'ї ("" — жодного).
     function pick(name) {
         if (nodesShown)
             currentNodeClass = name
@@ -31,12 +30,10 @@ Rectangle {
         family = nodesShown ? "edge" : "node"
     }
 
-    // Порядок стрілками: класи, поле назви нового класу, його стиль.
-    // Вгору з першого класу — нікуди, вниз зі стилю форми — нікуди.
     function stepClass(delta) {
         var names = classes.map(function (c) { return c.name })
         var i = names.indexOf(currentClass)
-        if (i === -1) {   // форма (або клас, якого вже нема)
+        if (i === -1) {
             if (delta < 0 && currentClass === "")
                 nameField.forceActiveFocus()
             else if (delta < 0)
@@ -68,7 +65,6 @@ Rectangle {
         return ""
     }
 
-    // Обраний клас на delta позицій вище (-) чи нижче (+).
     function moveCurrent(delta) {
         var i = indexOfClass(currentClass)
         var to = Math.max(0, Math.min(classes.length - 1, i + delta))
@@ -78,8 +74,6 @@ Rectangle {
         classList.positionViewAtIndex(to, ListView.Contain)
     }
 
-    // Backspace: видалити клас разом з елементами, спитавши підтвердження.
-    // Стандартний клас бекенд не видалить і пояснить чому в статусі.
     function removeClass(name) {
         var cls = classes[indexOfClass(name)]
         if (!cls)
@@ -132,7 +126,6 @@ Rectangle {
         }
     }
 
-    // Перейменування рядка на місці: ім'я класу, що редагується, або "".
     property string renaming: ""
     function finishRename(newName) {
         var old = renaming
@@ -146,8 +139,6 @@ Rectangle {
     }
     onFamilyChanged: renaming = ""
 
-    // Перетягування за ручку: рядок dragIndex зсунуто на dragOffset px,
-    // решта розступається навколо dropIndex.
     property int dragIndex: -1
     property real dragOffset: 0
     readonly property real rowStep: 36 + classList.spacing
@@ -180,7 +171,6 @@ Rectangle {
     function keysOf(defs) {
         return defs.map(function (d) { return d.key })
     }
-    // what: "color" | "shape" | "line" | "width" | "directed"
     function stepStyle(what, delta) {
         if (what === "color")
             newColor = cycle(Theme.nodePalette.map(String), newColor, delta)
@@ -207,7 +197,6 @@ Rectangle {
         nameField.text = ""
     }
 
-    // Стиль із форми — для нового класу чи обраного.
     function design() {
         return nodesShown
             ? { shape: newShape, color: newColor, opacity: newOpacity }
@@ -215,8 +204,6 @@ Rectangle {
                 directed: newDirected }
     }
 
-    // Клавіатура панелі. keyboard — чи можна взагалі (нема меню й вводу),
-    // arrows — чи вільні стрілки (нема виділених вершин).
     property bool keyboard: true
     property bool arrows: true
 
@@ -255,7 +242,6 @@ Rectangle {
         enabled: panel.keyboard && panel.arrows && panel.editing
         onActivated: panel.removeClass(panel.currentClass)
     }
-    // ←/→ колір; Shift — форма чи лінія; Ctrl — товщина; Ctrl+Shift — напрям
     Shortcut {
         sequence: "Left"
         enabled: panel.keyboard && panel.arrows
@@ -477,7 +463,7 @@ Rectangle {
                         anchors.rightMargin: 10
                         spacing: 6
 
-                        Text {   // ручка перетягування
+                        Text {
                             text: "⋮⋮"
                             color: grip.containsMouse || slot.dragged
                                    ? Theme.foreground
@@ -534,14 +520,11 @@ Rectangle {
                             id: renameField
                             visible: slot.renamingThis
                             Layout.fillWidth: true
-                            // Enter або клік деінде — зберегти, Escape — скасувати
                             onVisibleChanged: if (visible) {
                                 text = slot.modelData.name
                                 selectAll()
                                 forceActiveFocus()
                             }
-                            // зберігає onActiveFocusChanged: після нього
-                            // список перебудується і цього рядка вже не буде
                             onAccepted: panel.forceActiveFocus()
                             onActiveFocusChanged:
                                 if (!activeFocus && slot.renamingThis)
@@ -559,7 +542,7 @@ Rectangle {
                             color: Theme.mutedText
                             font.pixelSize: 11
                         }
-                        Text {   // око: показати / сховати елементи класу
+                        Text {
                             text: "👁"
                             font.pixelSize: 13
                             color: Theme.foreground
@@ -568,7 +551,7 @@ Rectangle {
                             Layout.preferredWidth: 16
                             horizontalAlignment: Text.AlignHCenter
 
-                            Rectangle {   // закреслення, поки клас схований
+                            Rectangle {
                                 visible: slot.modelData.hidden
                                 anchors.centerIn: parent
                                 width: parent.width + 2
@@ -619,11 +602,9 @@ Rectangle {
             placeholderText: "Назва класу"
 
             onAccepted: panel.submitNew()
-            // інакше Escape забере Shortcut вікна (скидання виділення)
             Keys.onShortcutOverride: function (event) {
                 event.accepted = event.key === Qt.Key_Escape
             }
-            // вихід із поля — до стилю; вгору — назад до класів
             Keys.onEscapePressed: panel.forceActiveFocus()
             Keys.onDownPressed: panel.forceActiveFocus()
             Keys.onUpPressed: {
@@ -757,7 +738,7 @@ Rectangle {
                     border.color: Theme.border
                     Behavior on color { ColorAnimation { duration: 100 } }
 
-                    Rectangle {   // зразок товщини лінії
+                    Rectangle {
                         anchors.centerIn: parent
                         width: 20
                         height: parent.modelData

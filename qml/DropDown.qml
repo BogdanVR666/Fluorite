@@ -1,8 +1,6 @@
 import QtQuick
 import QtQuick.Controls
 
-// Випадний список у стилі FlatButton. Пункти читає через textAt(),
-// тож працює з будь-якою моделлю, яку розуміє ComboBox.
 ComboBox {
     id: box
 

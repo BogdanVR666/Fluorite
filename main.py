@@ -9,7 +9,7 @@ from graphs import EdgeLayer, GraphBackend
 
 def main() -> int:
     app = QGuiApplication(sys.argv)
-    app.setOrganizationName("Fluorite")   # де QML Settings зберігає налаштування
+    app.setOrganizationName("Fluorite")
     app.setApplicationName("Fluorite")
 
     qmlRegisterType(EdgeLayer, "Graphs", 1, 0, "EdgeLayer")

@@ -1,34 +1,18 @@
-"""Історія змін для Ctrl+Z / Ctrl+Shift+Z.
-
-Крок історії — не копія графа, а лише різниця: для кожної вершини, ребра,
-групи, типу, що змінились, — яким був запис до дії і яким став після
-(None — запису не було).
-
-Різницю знаходить порівняння двох знімків стану (snapshot). Записи графа
-й вигляду незмінні, тож знімок — лише копія посилань на них, а змінений
-запис — інший об'єкт. Слотам не треба знати, як себе скасувати.
-
-В історію йде лише стан графа. Те, що стосується тільки вигляду, —
-виділення, порядок типів у панелі, схованість типів — у знімок не
-потрапляє, тож і скасувати його не можна.
-"""
 from collections import deque
 
 from FluoriteGraph import EdgeType, Hyperedge, NodeType
 from document import Document
 from view import TypeLook
 
-UNDO_DEPTH = 10     # скільки останніх кроків можна скасувати
+UNDO_DEPTH = 10
 
-_KEYED = ("types", "nodes", "edges", "groups")     # різниця по записах
+_KEYED = ("types", "nodes", "edges", "groups")
 
 BEFORE, AFTER = 0, 1
 
 
 def snapshot(doc: Document) -> dict:
     view = doc.view
-    # Тип у записах елементів — за uid: перейменування типу не зачіпає
-    # його вершин і ребер.
     uid = {family: {name: look.uid for name, look in view.types(family).items()}
            for family in ("node", "edge")}
     return {
@@ -64,16 +48,10 @@ def diff(old: dict, new: dict) -> dict | None:
 
 
 def apply(doc: Document, change: dict, side: int) -> tuple[set, set]:
-    """Переводить документ у стан side (BEFORE чи AFTER) кроку change.
-
-    Повертає (додані, видалені) id вершин — щоб оновити модель.
-    """
     now = 1 - side
     graph, view = doc.graph, doc.view
     types = change.get("types", {})
 
-    # 1. Типи: створити відсутні, перейменувати, оновити. Зайві видаляються
-    #    наприкінці, коли їхні елементи вже прибрано.
     for (family, uid), pair in types.items():
         rec = pair[side]
         if rec is None:
@@ -81,7 +59,7 @@ def apply(doc: Document, change: dict, side: int) -> tuple[set, set]:
         name, design, directed = rec
         looks = view.types(family)
         if pair[now] is None:
-            looks[name] = TypeLook(design, uid=uid)   # стає в кінець панелі
+            looks[name] = TypeLook(design, uid=uid)
             if family == "node":
                 graph.nodes[name] = NodeType(name)
             else:
@@ -98,13 +76,11 @@ def apply(doc: Document, change: dict, side: int) -> tuple[set, set]:
                       for name, look in view.types(family).items()}
              for family in ("node", "edge")}
 
-    # 2. Ребра, яких не має бути.
     edges = change.get("edges", {})
     for eid, pair in edges.items():
         if pair[side] is None and doc.has_edge(eid):
             doc._drop_edge(eid)
 
-    # 3. Вершини.
     added, removed = set(), set()
     for nid, pair in change.get("nodes", {}).items():
         rec = pair[side]
@@ -124,7 +100,6 @@ def apply(doc: Document, change: dict, side: int) -> tuple[set, set]:
         view.nodes[nid] = look
         doc.type_of[nid] = name
 
-    # 4. Ребра нові й змінені.
     for eid, pair in edges.items():
         rec = pair[side]
         if rec is None:
@@ -137,7 +112,6 @@ def apply(doc: Document, change: dict, side: int) -> tuple[set, set]:
         view.edges[eid] = look
         doc.edge_type_of[eid] = name
 
-    # 5. Групи.
     for gid, pair in change.get("groups", {}).items():
         rec = pair[side]
         if rec is None:
@@ -153,7 +127,6 @@ def apply(doc: Document, change: dict, side: int) -> tuple[set, set]:
             he.children = set(children)
         view.groups[gid] = look
 
-    # 6. Типи, яких не має бути, — уже порожні.
     for (family, uid), pair in types.items():
         if pair[side] is None and pair[now] is not None:
             name = pair[now][0]
@@ -171,7 +144,7 @@ class History:
     def __init__(self):
         self._undo: deque[dict] = deque(maxlen=UNDO_DEPTH)
         self._redo: list[dict] = []
-        self._base: dict | None = None     # стан після останнього кроку
+        self._base: dict | None = None
 
     def reset(self, state: dict):
         self._undo.clear()
@@ -188,7 +161,6 @@ class History:
         return True
 
     def rebase(self, state: dict):
-        """Після скасування/повтору: поточний стан — нова точка відліку."""
         self._base = state
 
     def undo(self) -> dict | None:

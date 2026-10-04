@@ -6,19 +6,17 @@ import QtQuick.Layouts
 Popup {
     id: menu
 
-    property int edgeId: -1            // ребро, яке редагуємо
+    property int edgeId: -1
     property string targetLabel: ""
     property string currentLine: "solid"
     property real currentWidth: 2.5
     property string currentColor: Theme.nodePalette[0]
-    property string currentClass: ""   // клас цього ребра
-    property bool currentDirected: false   // спрямоване (з дизайну класу)
-    property var classes: []           // [{name, count, color, width, line, directed}]
+    property string currentClass: ""
+    property bool currentDirected: false
+    property var classes: []
 
     readonly property var classNames: classes.map(function (c) { return c.name })
 
-    // Перечитати ребро з бекенда: після кожної зміни меню показує те, що
-    // справді сталося. Ребра вже нема — закриває меню й повертає false.
     function refresh() {
         var info = backend.edgeInfo(edgeId)
         if (!info.klass) {
@@ -130,7 +128,7 @@ Popup {
                         border.color: Theme.border
                         Behavior on color { ColorAnimation { duration: 100 } }
 
-                        Rectangle {   // зразок товщини лінії
+                        Rectangle {
                             anchors.centerIn: parent
                             width: 22
                             height: parent.modelData
@@ -190,7 +188,7 @@ Popup {
                 model: menu.classNames
                 onActivated: function (index) {
                     backend.setEdgeClass(menu.edgeId, textAt(index))
-                    menu.refresh()   // і відкочує комбобокс, якщо не вийшло
+                    menu.refresh()
                 }
             }
 

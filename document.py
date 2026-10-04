@@ -1,13 +1,3 @@
-"""Документ редактора: граф (FluoriteGraph) + його вигляд (View) + індекси.
-
-FluoriteGraph свідомо не тримає зворотних індексів і не прибирає висячі id.
-Редактору ж треба швидко знати тип вершини, її ребра, її групу — це тут.
-Усі зміни йдуть через Document, тож граф, вигляд та індекси узгоджені.
-
-Групи: склад — гіперребро графа, а на екрані групу показує метавершина
-(звичайна вершина стандартного типу, з підписом і ребрами), її id і стан
-згортання — у вигляді.
-"""
 from dataclasses import asdict, replace
 from itertools import count
 
@@ -22,11 +12,6 @@ Edge = EdgeType.Edge
 
 
 def reserve_ids(last: int):
-    """Наступні id сутностей — після last.
-
-    У FluoriteGraph немає для цього API, а без нього після відкриття файлу
-    нові сутності отримали б уже зайняті id.
-    """
     fg._counter = count(max(next(fg._counter), last + 1))
 
 
@@ -34,8 +19,8 @@ class Document:
     def __init__(self):
         self.graph = FluoriteGraph()
         self.view = View()
-        self.numbers = {"node": 1, "group": 1}   # наступні номери підписів
-        self.orphans: list[int] = []   # метавершини розпущених груп
+        self.numbers = {"node": 1, "group": 1}
+        self.orphans: list[int] = []
         self.create_class("node", DEFAULT_NODE_TYPE, {})
         self.create_class("edge", DEFAULT_EDGE_TYPE, {})
         self.view.defaults = {
@@ -44,12 +29,11 @@ class Document:
         self.reindex()
 
     def reindex(self):
-        """Перебудувати індекси з графа й вигляду."""
-        self.type_of: dict[int, str] = {}        # вершина → її тип
-        self.edge_type_of: dict[int, str] = {}   # ребро → його тип
-        self.incident: dict[int, set[int]] = {}  # вершина → її ребра
-        self.member_of: dict[int, int] = {}      # член → гіперребро групи
-        self.group_of_node: dict[int, int] = {}  # метавершина → гіперребро
+        self.type_of: dict[int, str] = {}
+        self.edge_type_of: dict[int, str] = {}
+        self.incident: dict[int, set[int]] = {}
+        self.member_of: dict[int, int] = {}
+        self.group_of_node: dict[int, int] = {}
         for name, t in self.graph.nodes.items():
             for nid in t.nodes:
                 self.type_of[nid] = name
@@ -63,13 +47,11 @@ class Document:
                 self.member_of[nid] = hid
             self.group_of_node[self.view.groups[hid].node] = hid
 
-    # ---- типи (класи) -------------------------------------------------
 
     def types(self, family: str) -> dict[str, TypeLook]:
         return self.view.types(family)
 
     def resolve_type(self, family: str, name: str | None) -> str:
-        """name, якщо такий тип є, інакше стандартний."""
         return (name if name in self.types(family)
                 else self.view.default_type(family))
 
@@ -130,11 +112,6 @@ class Document:
         return True
 
     def remove_class(self, family: str, name: str) -> set[int] | None:
-        """Видаляє тип разом з його елементами.
-
-        Повертає вершини, у яких змінився ступінь, або None, якщо тип
-        видалити не можна (його нема або він стандартний).
-        """
         if (name not in self.types(family)
                 or self.view.is_default(family, name)):
             return None
@@ -169,7 +146,6 @@ class Document:
         types[name] = replace(look, hidden=hidden)
         return True
 
-    # ---- вершини ------------------------------------------------------
 
     def has_node(self, nid: int) -> bool:
         return nid in self.type_of
@@ -225,7 +201,6 @@ class Document:
         node = self.graph.nodes[old].nodes.pop(nid)
         self.graph.nodes[type_name].nodes[nid] = node
         self.type_of[nid] = type_name
-        # без перекриттів — дизайн нового типу
         self.view.nodes[nid] = replace(self.view.nodes[nid],
                                        style=NodeStyle())
 
@@ -273,7 +248,6 @@ class Document:
                 parent[root(e.node_in)] = root(e.node_out)
         return sum(1 for nid in parent if root(nid) == nid)
 
-    # ---- ребра --------------------------------------------------------
 
     def has_edge(self, eid: int) -> bool:
         return eid in self.edge_type_of
@@ -285,7 +259,6 @@ class Document:
         return self.edge_type_of[eid]
 
     def ends(self, eid: int) -> tuple[int, int]:
-        """(джерело, ціль)."""
         e = self.edge(eid)
         return e.node_in, e.node_out
 
@@ -297,13 +270,11 @@ class Document:
                          self.view.edge_types[self.edge_type_of[eid]].design)
 
     def edges(self):
-        """(id, джерело, ціль) усіх ребер."""
         for t in self.graph.edges.values():
             for eid, e in t.edges.items():
                 yield eid, e.node_in, e.node_out
 
     def shown_edges(self):
-        """Як edges(), але без ребер схованих типів."""
         for name, t in self.graph.edges.items():
             if self.view.edge_types[name].hidden:
                 continue
@@ -315,7 +286,6 @@ class Document:
 
     def find_edge(self, type_name: str, a: int, b: int,
                   skip: int | None = None) -> int | None:
-        """Ребро типу між a і b, у будь-якому напрямі."""
         for eid in self.incident.get(a, ()):
             if (eid != skip and self.edge_type_of[eid] == type_name
                     and b in self.ends(eid)):
@@ -323,8 +293,6 @@ class Document:
         return None
 
     def add_edge(self, a: int, b: int, type_name: str | None) -> int | None:
-        """Нове ребро a → b; None, якщо таке вже є (одне ребро типу на
-        пару вершин) або кінця нема."""
         name = self.resolve_type("edge", type_name)
         if (a == b or a not in self.type_of or b not in self.type_of
                 or self.find_edge(name, a, b) is not None):
@@ -334,7 +302,7 @@ class Document:
         return edge.edge_id
 
     def bulk_add_edges(self, pairs, type_name: str | None) -> int:
-        return sum(1 for a, b in pairs              # пари "джерело, ціль"
+        return sum(1 for a, b in pairs
                    if self.add_edge(a, b, type_name) is not None)
 
     def _insert_edge(self, type_name: str, edge: Edge, look: EdgeLook):
@@ -372,11 +340,10 @@ class Document:
             return False
         a, b = self.ends(eid)
         if self.find_edge(new_name, a, b, skip=eid) is not None:
-            return False           # пара вже зайнята ребром цього типу
+            return False
         edge = self.graph.edges[self.edge_type_of[eid]].edges.pop(eid)
-        self.graph.edges[new_name].edges[eid] = edge   # напрям зберігається
+        self.graph.edges[new_name].edges[eid] = edge
         self.edge_type_of[eid] = new_name
-        # без перекриттів — дизайн нового типу
         self.view.edges[eid] = EdgeLook()
         return True
 
@@ -385,7 +352,6 @@ class Document:
         self.view.edges[eid] = replace(look, style=replace(look.style,
                                                            **style))
 
-    # ---- групи --------------------------------------------------------
 
     def group_node(self, gid: int) -> int:
         return self.view.groups[gid].node
@@ -432,7 +398,7 @@ class Document:
         look = self.view.groups.get(gid)
         if look is None or look.collapsed == collapsed:
             return False
-        if collapsed:              # метавершина — у центроїд членів
+        if collapsed:
             looks = [self.view.nodes[n] for n in self.group_members(gid)]
             self.move_node(look.node, sum(l.x for l in looks) / len(looks),
                            sum(l.y for l in looks) / len(looks))
@@ -440,7 +406,6 @@ class Document:
         return True
 
     def visual_owner(self, nid: int) -> int | None:
-        """Вершина, якою nid зараз показана на екрані; None — не видно."""
         if self.view.node_types[self.type_of[nid]].hidden:
             return None
         top = None
@@ -470,7 +435,6 @@ class Document:
         if len(members) < 2:
             self.orphans.append(self.remove_group(gid))
 
-    # ---- документ цілком ----------------------------------------------
 
     def clear(self):
         for t in self.graph.nodes.values():
@@ -494,7 +458,6 @@ class Document:
 
 
 def _rekey(d: dict, old, new, value):
-    """Замінити ключ old на new, не змінюючи порядку."""
     items = [(new if k == old else k, value if k == old else v)
              for k, v in d.items()]
     d.clear()
