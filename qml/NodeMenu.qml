@@ -17,13 +17,6 @@ Popup {
     property int selectionCount: 1
     readonly property bool group: selectionCount > 1
 
-    property int groupId: -1
-    property string groupLabel: ""
-
-    property bool isGroup: false
-    property int ownGroupId: -1
-    property int memberCount: 0
-
     readonly property var classNames: classes.map(function (c) { return c.name })
 
     property string edgeClass: ""
@@ -40,11 +33,6 @@ Popup {
         currentColor = String(info.color)
         currentOpacity = info.opacity
         currentClass = info.klass
-        groupId = info.groupId
-        groupLabel = info.groupLabel
-        isGroup = info.isGroup === true
-        ownGroupId = info.ownGroupId
-        memberCount = info.memberCount
         classCombo.currentIndex = classNames.indexOf(currentClass)
         return true
     }
@@ -95,32 +83,10 @@ Popup {
 
             Label {
                 text: menu.group ? "Виділено вершин: " + menu.selectionCount
-                    : menu.isGroup ? "Група " + menu.targetLabel
-                                     + " (" + menu.memberCount + ")"
-                                   : "Вершина " + menu.targetLabel
+                                 : "Вершина " + menu.targetLabel
                 color: Theme.foreground
                 font.bold: true
                 font.pixelSize: 14
-            }
-
-            FlatButton {
-                visible: menu.isGroup && !menu.group
-                text: "Розгорнути групу"
-                Layout.fillWidth: true
-                onClicked: {
-                    backend.setGroupCollapsed(menu.ownGroupId, false)
-                    menu.close()
-                }
-            }
-
-            FlatButton {
-                visible: menu.isGroup && !menu.group
-                text: "Розгрупувати"
-                Layout.fillWidth: true
-                onClicked: {
-                    backend.ungroup(menu.ownGroupId)
-                    menu.close()
-                }
             }
 
             Label {
@@ -166,13 +132,11 @@ Popup {
             }
 
             Label {
-                visible: !menu.isGroup
                 text: "Форма"; color: Theme.mutedText; font.pixelSize: 12
                 Layout.topMargin: Theme.spaceXs
             }
 
             GridLayout {
-                visible: !menu.isGroup
                 columns: 4
                 columnSpacing: Theme.spaceSm
                 Repeater {
@@ -309,21 +273,10 @@ Popup {
             }
 
             FlatButton {
-                visible: menu.group
-                text: "Згорнути виділені у групу"
+                text: menu.group ? "Обвести виділені групою" : "Обвести групою"
                 Layout.fillWidth: true
                 onClicked: {
                     backend.groupSelection()
-                    menu.close()
-                }
-            }
-
-            FlatButton {
-                visible: menu.groupId !== -1
-                text: "Згорнути групу «" + menu.groupLabel + "»"
-                Layout.fillWidth: true
-                onClicked: {
-                    backend.setGroupCollapsed(menu.groupId, true)
                     menu.close()
                 }
             }

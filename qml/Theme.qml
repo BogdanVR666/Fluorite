@@ -24,6 +24,7 @@ QtObject {
         "badge.foreground":            "#ffffff",
         "errorForeground":             "#ff6767",
         "editorLineNumber.foreground": "#7f8fd9",
+        "editorWhitespace.foreground": "#5a5a80",
         "terminal.ansiBlue":           "#3d7bd9",
         "terminal.ansiRed":            "#e74c3c",
         "terminal.ansiGreen":          "#27ae60",
@@ -67,6 +68,7 @@ QtObject {
     readonly property color selection:     c("focusBorder", "#f39c12")
     readonly property color marked:        c("terminal.ansiBrightCyan", "#4dd0e1")
     readonly property color edge:          c("editorLineNumber.foreground", "#858585")
+    readonly property color gridDot:       c("editorWhitespace.foreground", "#5a5a5a")
     readonly property color badge:         c("badge.background", "#4d4d4d")
     readonly property color badgeText:     c("badge.foreground", "#ffffff")
     readonly property color error:         c("errorForeground", "#f48771")
@@ -74,6 +76,7 @@ QtObject {
     readonly property color markedFill:          Qt.alpha(marked, 0.12)
     readonly property color markedTextSelection: Qt.alpha(marked, 0.45)
     readonly property color nodeStroke:          Qt.alpha(foreground, 0.78)
+    readonly property color groupStroke:         Qt.alpha(foreground, 0.45)
     readonly property color labelOutline:        Qt.alpha(background, 0.38)
     readonly property color modalScrim:          Qt.alpha("black", 0.35)
 
@@ -94,6 +97,7 @@ QtObject {
     readonly property int directionTileWidth:     52
     readonly property int nodeHeight:             44
     readonly property int badgeSize:              18
+    readonly property int gridDotSize:            3
     readonly property int checkboxSize:           16
     readonly property int panelWidth:             210
     readonly property int dialogWidth:            340

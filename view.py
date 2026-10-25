@@ -21,6 +21,8 @@ EDGE_DESIGN = EdgeStyle(color="#7f8fd9", width=2.5, line="solid")
 
 DEFAULT_NODE_TYPE = "Звичайна"
 DEFAULT_EDGE_TYPE = "Звичайне"
+GROUP_NODE_TYPE = "Група"
+CONTAINS_EDGE_TYPE = "містить"
 
 _type_uids = count(1)
 
@@ -46,8 +48,13 @@ class EdgeLook:
 
 @dataclass(frozen=True, slots=True)
 class GroupLook:
-    node: int
+    x: float
+    y: float
+    width: float
+    height: float
     collapsed: bool = False
+    mode: str = "frame"
+    node: tuple[float, float] | None = None
 
 
 def effective(style, design):

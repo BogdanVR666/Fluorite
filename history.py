@@ -135,7 +135,6 @@ def apply(doc: Document, change: dict, side: int) -> tuple[set, set]:
 
     if "numbers" in change:
         doc.numbers = dict(change["numbers"][side])
-    doc.orphans = []
     doc.reindex()
     return added, removed
 

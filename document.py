@@ -3,9 +3,10 @@ from itertools import count
 
 import FluoriteGraph as fg
 from FluoriteGraph import EdgeType, FluoriteGraph, Hyperedge, NodeType
-from view import (DEFAULT_EDGE_TYPE, DEFAULT_NODE_TYPE, EDGE_DESIGN,
-                  NODE_DESIGN, EdgeLook, EdgeStyle, GroupLook, NodeLook,
-                  NodeStyle, TypeLook, View, effective, merged)
+from view import (CONTAINS_EDGE_TYPE, DEFAULT_EDGE_TYPE, DEFAULT_NODE_TYPE,
+                  EDGE_DESIGN, GROUP_NODE_TYPE, NODE_DESIGN, EdgeLook,
+                  EdgeStyle, GroupLook, NodeLook, NodeStyle, TypeLook, View,
+                  effective, merged)
 
 Node = NodeType.Node
 Edge = EdgeType.Edge
@@ -20,9 +21,10 @@ class Document:
         self.graph = FluoriteGraph()
         self.view = View()
         self.numbers = {"node": 1, "group": 1}
-        self.orphans: list[int] = []
         self.create_class("node", DEFAULT_NODE_TYPE, {})
         self.create_class("edge", DEFAULT_EDGE_TYPE, {})
+        self.create_class("node", GROUP_NODE_TYPE, {})
+        self.create_class("edge", CONTAINS_EDGE_TYPE, {})
         self.view.defaults = {
             "node": self.view.node_types[DEFAULT_NODE_TYPE].uid,
             "edge": self.view.edge_types[DEFAULT_EDGE_TYPE].uid}
@@ -32,8 +34,7 @@ class Document:
         self.type_of: dict[int, str] = {}
         self.edge_type_of: dict[int, str] = {}
         self.incident: dict[int, set[int]] = {}
-        self.member_of: dict[int, int] = {}
-        self.group_of_node: dict[int, int] = {}
+        self.parents: dict[int, set[int]] = {}
         for name, t in self.graph.nodes.items():
             for nid in t.nodes:
                 self.type_of[nid] = name
@@ -42,10 +43,9 @@ class Document:
                 self.edge_type_of[eid] = name
                 self.incident.setdefault(e.node_in, set()).add(eid)
                 self.incident.setdefault(e.node_out, set()).add(eid)
-        for hid, he in self.graph.hyperedges.items():
-            for nid in he.children:
-                self.member_of[nid] = hid
-            self.group_of_node[self.view.groups[hid].node] = hid
+        for gid, he in self.graph.hyperedges.items():
+            for child in he.children:
+                self.parents.setdefault(child, set()).add(gid)
 
 
     def types(self, family: str) -> dict[str, TypeLook]:
@@ -205,16 +205,13 @@ class Document:
                                        style=NodeStyle())
 
     def remove_node(self, nid: int) -> set[int]:
-        gid = self.group_of_node.get(nid)
-        if gid is not None:
-            self.remove_group(gid)
         neighbors = self.neighbors(nid)
         for eid in list(self.incident.get(nid, ())):
             self._drop_edge(eid)
         del self.graph.nodes[self.type_of.pop(nid)].nodes[nid]
         del self.view.nodes[nid]
         self.incident.pop(nid, None)
-        self._forget_member(nid)
+        self._forget_child(nid)
         return neighbors
 
     def remove_nodes(self, ids: set[int]) -> set[int]:
@@ -245,6 +242,8 @@ class Document:
 
         for t in self.graph.edges.values():
             for e in t.edges.values():
+                parent.setdefault(e.node_in, e.node_in)
+                parent.setdefault(e.node_out, e.node_out)
                 parent[root(e.node_in)] = root(e.node_out)
         return sum(1 for nid in parent if root(nid) == nid)
 
@@ -294,7 +293,7 @@ class Document:
 
     def add_edge(self, a: int, b: int, type_name: str | None) -> int | None:
         name = self.resolve_type("edge", type_name)
-        if (a == b or a not in self.type_of or b not in self.type_of
+        if (a == b or not self.has_element(a) or not self.has_element(b)
                 or self.find_edge(name, a, b) is not None):
             return None
         edge = Edge(a, b, "")
@@ -353,87 +352,204 @@ class Document:
                                                            **style))
 
 
-    def group_node(self, gid: int) -> int:
-        return self.view.groups[gid].node
+    def has_group(self, gid: int) -> bool:
+        return gid in self.view.groups
+
+    def has_element(self, eid: int) -> bool:
+        return eid in self.type_of or eid in self.view.groups
+
+    def name_of(self, eid: int) -> str:
+        if eid in self.view.groups:
+            return self.graph.hyperedges[eid].name
+        return self.node(eid).name
+
+    def group_look(self, gid: int) -> GroupLook:
+        return self.view.groups[gid]
 
     def group_members(self, gid: int) -> set[int]:
         return self.graph.hyperedges[gid].children
 
-    def add_group(self, members: set[int]) -> int | None:
-        picked = {nid for nid in members
-                  if nid in self.type_of and self.visual_owner(nid) == nid}
-        if len(picked) < 2:
-            return None
-        gid = self.member_of.get(next(iter(picked)))
-        if gid is not None and self.group_members(gid) == picked:
-            return gid
-        for nid in picked:
-            self._forget_member(nid)
+    def add_group(self, x: float, y: float, width: float,
+                  height: float) -> int:
         label = f"Група {self.numbers['group']}"
         self.numbers["group"] += 1
-        looks = [self.view.nodes[n] for n in picked]
-        meta = self.add_node(sum(l.x for l in looks) / len(looks),
-                             sum(l.y for l in looks) / len(looks),
-                             None, name=label)
-        he = Hyperedge(label, children=set(picked))
+        he = Hyperedge(label, "")
         self.graph.hyperadd(he)
-        gid = he.hyperedge_id
-        self.view.groups[gid] = GroupLook(meta)
-        self.group_of_node[meta] = gid
-        for m in picked:
-            self.member_of[m] = gid
-        return gid
+        self.view.groups[he.hyperedge_id] = GroupLook(x, y, width, height)
+        self.place()
+        return he.hyperedge_id
 
-    def remove_group(self, gid: int) -> int | None:
-        he = self.graph.hyperedges.pop(gid, None)
-        if he is None:
-            return None
-        look = self.view.groups.pop(gid)
-        for nid in he.children:
-            self.member_of.pop(nid, None)
-        self.group_of_node.pop(look.node, None)
-        return look.node
+    def remove_group(self, gid: int) -> set[int]:
+        neighbors = self.neighbors(gid)
+        for eid in list(self.incident.get(gid, ())):
+            self._drop_edge(eid)
+        self.incident.pop(gid, None)
+        self._forget_child(gid)
+        for child in self.graph.hyperedges.pop(gid).children:
+            self.parents.get(child, set()).discard(gid)
+        del self.view.groups[gid]
+        self.place()
+        return neighbors
+
+    def rename_group(self, gid: int, name: str):
+        self.graph.hyperedges[gid].name = name
+
+    def move_group(self, gid: int, x: float, y: float):
+        self.view.groups[gid] = replace(self.view.groups[gid], x=x, y=y)
+
+    def resize_group(self, gid: int, width: float, height: float):
+        self.view.groups[gid] = replace(self.view.groups[gid],
+                                        width=width, height=height)
 
     def set_collapsed(self, gid: int, collapsed: bool) -> bool:
         look = self.view.groups.get(gid)
         if look is None or look.collapsed == collapsed:
             return False
-        if collapsed:
-            looks = [self.view.nodes[n] for n in self.group_members(gid)]
-            self.move_node(look.node, sum(l.x for l in looks) / len(looks),
-                           sum(l.y for l in looks) / len(looks))
         self.view.groups[gid] = replace(look, collapsed=collapsed)
+        if not collapsed:
+            self.place()
         return True
 
-    def visual_owner(self, nid: int) -> int | None:
-        if self.view.node_types[self.type_of[nid]].hidden:
-            return None
-        top = None
-        cur = nid
-        while (gid := self.member_of.get(cur)) is not None:
-            look = self.view.groups[gid]
-            cur = look.node
-            if look.collapsed:
-                top = cur
-        if top is not None:
-            return top
-        own = self.group_of_node.get(nid)
-        if own is not None and not self.view.groups[own].collapsed:
-            return None
-        return nid
+    def set_group_mode(self, gid: int, mode: str) -> bool:
+        look = self.view.groups.get(gid)
+        if look is None or look.mode == mode:
+            return False
+        self.view.groups[gid] = replace(look, mode=mode)
+        if mode == "frame":
+            self.place()
+        return True
 
-    def take_orphans(self) -> list[int]:
-        out, self.orphans = self.orphans, []
+    def is_tree(self, gid: int) -> bool:
+        look = self.view.groups[gid]
+        return look.mode == "tree" and not look.collapsed
+
+    def move_tree_node(self, gid: int, dx: float, dy: float):
+        self.view.groups[gid] = replace(self.view.groups[gid], node=(dx, dy))
+
+    def group_style(self) -> NodeStyle:
+        look = self.view.node_types.get(GROUP_NODE_TYPE)
+        return NODE_DESIGN if look is None else look.design
+
+    def contains_style(self) -> tuple[EdgeStyle, bool]:
+        look = self.view.edge_types.get(CONTAINS_EDGE_TYPE)
+        if look is None:
+            return EDGE_DESIGN, False
+        return look.design, self.graph.edges[CONTAINS_EDGE_TYPE].directed
+
+    def tree_links(self) -> list[tuple[int, int]]:
+        look = self.view.edge_types.get(CONTAINS_EDGE_TYPE)
+        if look is not None and look.hidden:
+            return []
+        return [(gid, child)
+                for gid in self.view.groups
+                if self.is_tree(gid) and self.shown(gid)
+                for child in sorted(self.graph.hyperedges[gid].children)
+                if self.shown(child)]
+
+    def contents(self, gids) -> tuple[set[int], set[int]]:
+        nodes, groups = set(), set()
+        stack = list(gids)
+        while stack:
+            for child in self.graph.hyperedges[stack.pop()].children:
+                if child not in self.view.groups:
+                    nodes.add(child)
+                elif child not in groups:
+                    groups.add(child)
+                    stack.append(child)
+        return nodes, groups
+
+    def _folders(self, eid: int) -> set[int | None]:
+        parents = self.parents.get(eid)
+        if not parents:
+            return {None}
+        out = set()
+        for parent in parents:
+            for folder in self._folders(parent):
+                if folder is None and self.view.groups[parent].collapsed:
+                    folder = parent
+                out.add(folder)
         return out
 
-    def _forget_member(self, nid: int):
-        gid = self.member_of.pop(nid, None)
-        if gid is None:
-            return
-        members = self.group_members(gid)
-        members.discard(nid)
-        if len(members) < 2:
-            self.orphans.append(self.remove_group(gid))
+    def visual_owners(self, eid: int) -> set[int]:
+        if (eid in self.type_of
+                and self.view.node_types[self.type_of[eid]].hidden):
+            return set()
+        kind = self.view.node_types.get(GROUP_NODE_TYPE)
+        if (eid in self.view.groups and self.is_tree(eid)
+                and kind is not None and kind.hidden):
+            return set()
+        return (self._folders(eid) - {None}) or {eid}
+
+    def shown(self, eid: int) -> bool:
+        return self.visual_owners(eid) == {eid}
+
+    def _inside_open(self, u: int, v: int) -> bool:
+        common = self.parents.get(u, set()) & self.parents.get(v, set())
+        return any(not self.view.groups[gid].collapsed and self.shown(gid)
+                   for gid in common)
+
+    def visual_lines(self) -> list[tuple[int, int, int]]:
+        owners = {eid: self.visual_owners(eid)
+                  for eid in (*self.type_of, *self.view.groups)}
+        lines = []
+        for eid, u, v in self.shown_edges():
+            ou, ov = owners[u], owners[v]
+            if (ou != {u} or ov != {v}) and self._inside_open(u, v):
+                continue
+            seen = set()
+            for a in sorted(ou):
+                for b in sorted(ov):
+                    pair = frozenset((a, b))
+                    if a != b and pair not in seen:
+                        seen.add(pair)
+                        lines.append((eid, a, b))
+        return lines
+
+    def place(self, ids=None) -> set[int]:
+        groups = self.view.groups
+        frozen = {gid for gid, look in groups.items()
+                  if look.collapsed or look.mode == "tree"
+                  or not self.shown(gid)}
+        live = [gid for gid in groups if gid not in frozen]
+        if ids is None:
+            ids = [*self.type_of, *groups]
+        changed = set()
+        for eid in ids:
+            old = self.parents.get(eid, set())
+            around = {gid for gid in old if gid in frozen}
+            around |= {gid for gid in live if self._holds(gid, eid, frozen)}
+            new = {gid for gid in around
+                   if not any(self._holds(gid, other, frozen)
+                              for other in around if other != gid)}
+            if new == old:
+                continue
+            for gid in old - new:
+                self.graph.hyperedges[gid].children.discard(eid)
+            for gid in new - old:
+                self.graph.hyperedges[gid].children.add(eid)
+            self.parents[eid] = new
+            changed |= old ^ new
+        return changed
+
+    def _holds(self, gid: int, eid: int, frozen: set[int]) -> bool:
+        if gid in frozen:
+            return eid in self.graph.hyperedges[gid].children
+        g = self.view.groups[gid]
+        if eid in self.view.nodes:
+            n = self.view.nodes[eid]
+            return (g.x <= n.x <= g.x + g.width
+                    and g.y <= n.y <= g.y + g.height)
+        inner = self.view.groups[eid]
+        return (eid != gid
+                and g.x <= inner.x and g.y <= inner.y
+                and inner.x + inner.width <= g.x + g.width
+                and inner.y + inner.height <= g.y + g.height
+                and (inner.x, inner.y, inner.width, inner.height)
+                != (g.x, g.y, g.width, g.height))
+
+    def _forget_child(self, eid: int):
+        for gid in self.parents.pop(eid, ()):
+            self.graph.hyperedges[gid].children.discard(eid)
 
 
     def clear(self):
@@ -446,14 +562,12 @@ class Document:
         self.view.edges.clear()
         self.view.groups.clear()
         self.numbers = {"node": 1, "group": 1}
-        self.orphans.clear()
         self.reindex()
 
     def adopt(self, other: "Document"):
         self.graph = other.graph
         self.view = other.view
         self.numbers = other.numbers
-        self.orphans = []
         self.reindex()
 
 

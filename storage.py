@@ -55,8 +55,7 @@ def graph_to_json(doc: Document) -> str:
                       for nid, look in view.nodes.items()},
             "edges": {str(eid): {"style": _style_json(look.style)}
                       for eid, look in view.edges.items()},
-            "groups": {str(gid): {"node": look.node,
-                                  "collapsed": look.collapsed}
+            "groups": {str(gid): asdict(look)
                        for gid, look in view.groups.items()},
         },
         "numbers": doc.numbers,
@@ -129,31 +128,38 @@ def _from_v7(data: dict) -> Document:
                 NodeLook(float(look.get("x", 0.0)), float(look.get("y", 0.0)),
                          _style(NodeStyle, look.get("style"))))
 
+    looks = view.get("groups", {})
+    children = {}
+    for h in graph.get("hyperedges", []):
+        gid = take(int(h["id"]))
+        look = looks.get(str(gid))
+        if look is None or "width" not in look:
+            continue
+        doc.graph.hyperadd(Hyperedge(str(h.get("name", "")),
+                                     h.get("description"), set(), gid))
+        doc.view.groups[gid] = GroupLook(
+            float(look["x"]), float(look["y"]),
+            float(look["width"]), float(look["height"]),
+            bool(look.get("collapsed", False)),
+            str(look.get("mode", "frame")),
+            tuple(look["node"]) if look.get("node") else None)
+        children[gid] = [int(c) for c in h.get("children", [])]
+    for gid, ids in children.items():
+        doc.graph.hyperedges[gid].children = {c for c in ids
+                                              if doc.has_element(c)}
+
     looks = view.get("edges", {})
     for name, t in graph.get("edge_types", {}).items():
         for e in t.get("edges", []):
             eid = take(int(e["id"]))
             a, b = int(e["node_in"]), int(e["node_out"])
-            if a == b or not doc.has_node(a) or not doc.has_node(b):
+            if a == b or not doc.has_element(a) or not doc.has_element(b):
                 continue
             doc._insert_edge(
                 doc.resolve_type("edge", name),
                 Edge(a, b, str(e.get("description") or ""), eid),
                 EdgeLook(_style(EdgeStyle,
                                 looks.get(str(eid), {}).get("style"))))
-
-    looks = view.get("groups", {})
-    for h in graph.get("hyperedges", []):
-        gid = take(int(h["id"]))
-        look = looks.get(str(gid))
-        if look is None or not doc.has_node(int(look["node"])):
-            continue
-        doc.graph.hyperadd(Hyperedge(
-            str(h.get("name", "")), h.get("description"),
-            {int(c) for c in h.get("children", []) if doc.has_node(int(c))},
-            gid))
-        doc.view.groups[gid] = GroupLook(int(look["node"]),
-                                         bool(look.get("collapsed", False)))
 
     if seen:
         reserve_ids(max(seen))
@@ -206,28 +212,5 @@ def _from_legacy(data: dict, version: int) -> Document:
             doc.graph.edges[doc.edge_type(eid)].edges[eid] = Edge(
                 a, b, str(e["description"]), eid)
 
-    group_number = 1
-    for g in data.get("groups", []):
-        group_number = max(group_number, int(g["id"]) + 1)
-        nid = g.get("node")
-        label = str(g.get("label", "")) or f"Група {g['id']}"
-        if nid is None:
-            nid = doc.add_node(float(g.get("x", 0.0)), float(g.get("y", 0.0)),
-                               None, name=label)
-        nid = int(nid)
-        members = {int(m) for m in g.get("members", [])
-                   if doc.has_node(int(m)) and int(m) not in doc.member_of
-                   and int(m) != nid}
-        if (not doc.has_node(nid) or nid in doc.group_of_node
-                or len(members) < 2):
-            continue
-        he = Hyperedge(label, children=members)
-        doc.graph.hyperadd(he)
-        doc.view.groups[he.hyperedge_id] = GroupLook(
-            nid, bool(g.get("collapsed", False)))
-        doc.group_of_node[nid] = he.hyperedge_id
-        for m in members:
-            doc.member_of[m] = he.hyperedge_id
-
-    doc.numbers = {"node": last + 1, "group": group_number}
+    doc.numbers = {"node": last + 1, "group": 1}
     return doc

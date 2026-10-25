@@ -7,3 +7,7 @@ TextBox 1.0 TextBox.qml
 FlatButton 1.0 FlatButton.qml
 DropDown 1.0 DropDown.qml
 ConfirmDialog 1.0 ConfirmDialog.qml
+DragArea 1.0 DragArea.qml
+Group 1.0 Group.qml
+GroupMenu 1.0 GroupMenu.qml
+CanvasMenu 1.0 CanvasMenu.qml

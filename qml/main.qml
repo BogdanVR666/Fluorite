@@ -39,6 +39,7 @@ ApplicationWindow {
                                              Math.abs(bandY1 - bandY0))
 
     property int edgeSourceId: -1
+    property bool edgeSourceIsGroup: false
     property real edgeSrcX: 0
     property real edgeSrcY: 0
     property real edgeDragX: 0
@@ -67,6 +68,22 @@ ApplicationWindow {
         nodeMenu.open()
     }
 
+    function openGroupMenu(id, px, py) {
+        if (!backend.groupInfo(id).selected)
+            backend.selectGroup(id, false)
+        groupMenu.groupId = id
+        if (!groupMenu.refresh())
+            return
+        root.menuAnchor = Qt.point(px, py)
+        groupMenu.open()
+    }
+
+    function openCanvasMenu(px, py) {
+        canvasMenu.spot = Qt.point(px, py)
+        root.menuAnchor = Qt.point(px, py)
+        canvasMenu.open()
+    }
+
     function openEdgeMenu(id, px, py) {
         edgeMenu.edgeId = id
         if (!edgeMenu.refresh())
@@ -84,17 +101,19 @@ ApplicationWindow {
                                  root.bandAdditive)
             return
         }
-        if (backend.selectionCount > 0
-                && (modifiers & Qt.ShiftModifier) === 0) {
+        if (root.anySelected && (modifiers & Qt.ShiftModifier) === 0) {
             backend.clearSelection()
             return
         }
         backend.addNode(mx, my, classPanel.currentNodeClass)
     }
 
+    readonly property bool anySelected:
+        backend.selectionCount + backend.groupSelectionCount > 0
+
     Shortcut {
         sequences: [StandardKey.Delete, "Backspace"]
-        enabled: backend.selectionCount > 0
+        enabled: root.anySelected
         onActivated: backend.removeSelection()
     }
     Shortcut {
@@ -143,9 +162,10 @@ ApplicationWindow {
         nodeClasses: root.nodeClasses
         edgeClasses: root.edgeClasses
         keyboard: !nodeMenu.opened && !edgeMenu.opened
+                  && !groupMenu.opened && !canvasMenu.opened
                   && !(root.activeFocusItem instanceof TextInput)
                   && !(root.activeFocusItem instanceof TextEdit)
-        arrows: backend.selectionCount === 0
+        arrows: !root.anySelected
     }
 
     Item {
@@ -168,14 +188,20 @@ ApplicationWindow {
                     return
                 }
                 var id = backend.nodeAt(mouse.x, mouse.y)
+                var isGroup = id === -1
+                if (isGroup)
+                    id = backend.groupAt(mouse.x, mouse.y, false)
                 if (id === -1) {
                     var edge = backend.edgeAt(mouse.x, mouse.y)
                     if (edge !== -1)
                         root.openEdgeMenu(edge, mouse.x, mouse.y)
+                    else
+                        root.openCanvasMenu(mouse.x, mouse.y)
                     return
                 }
-                var info = backend.nodeInfo(id)
+                var info = isGroup ? backend.groupInfo(id) : backend.nodeInfo(id)
                 root.edgeSourceId = id
+                root.edgeSourceIsGroup = isGroup
                 root.edgeSrcX = info.x
                 root.edgeSrcY = info.y
                 root.edgeDragX = mouse.x
@@ -204,10 +230,38 @@ ApplicationWindow {
                 var src = root.edgeSourceId
                 root.edgeSourceId = -1
                 var tgt = backend.nodeAt(mouse.x, mouse.y)
+                if (tgt === -1)
+                    tgt = backend.groupAt(mouse.x, mouse.y, true)
                 if (tgt !== -1 && tgt !== src) {
                     backend.addEdge(src, tgt, classPanel.currentEdgeClass)
+                } else if (tgt === src && root.edgeSourceIsGroup) {
+                    root.openGroupMenu(src, mouse.x, mouse.y)
                 } else if (tgt === src) {
                     root.openNodeMenu(src, mouse.x, mouse.y)
+                }
+            }
+        }
+
+        Item {
+            id: gridDots
+            anchors.fill: parent
+            visible: false
+
+            readonly property int columns: Math.floor(width / backend.gridStep)
+            readonly property int rows: Math.floor(height / backend.gridStep)
+
+            Repeater {
+                model: gridDots.columns * gridDots.rows
+                delegate: Rectangle {
+                    required property int index
+                    x: (index % gridDots.columns + 1) * backend.gridStep
+                       - width / 2
+                    y: (Math.floor(index / gridDots.columns) + 1)
+                       * backend.gridStep - height / 2
+                    width: Theme.gridDotSize
+                    height: Theme.gridDotSize
+                    radius: width / 2
+                    color: Theme.gridDot
                 }
             }
         }
@@ -236,10 +290,19 @@ ApplicationWindow {
         }
 
         Repeater {
+            model: backend.groupsModel
+
+            delegate: Group {
+                grid: gridDots
+            }
+        }
+
+        Repeater {
             model: backend.nodesModel
 
             delegate: Node {
                 edgeClass: classPanel.currentEdgeClass
+                grid: gridDots
             }
         }
 
@@ -269,6 +332,20 @@ ApplicationWindow {
         EdgeMenu {
             id: edgeMenu
             classes: root.edgeClasses
+
+            x: root.menuX(width)
+            y: root.menuY(height)
+        }
+
+        GroupMenu {
+            id: groupMenu
+
+            x: root.menuX(width)
+            y: root.menuY(height)
+        }
+
+        CanvasMenu {
+            id: canvasMenu
 
             x: root.menuX(width)
             y: root.menuY(height)
